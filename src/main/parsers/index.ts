@@ -63,6 +63,8 @@ import { QwenOutputParser } from './qwen-output-parser';
 import { OmpOutputParser } from './omp-output-parser';
 import { GrokOutputParser } from './grok-output-parser';
 import { AntigravityOutputParser } from './antigravity-output-parser';
+import { CursorOutputParser } from './cursor-output-parser';
+import { KimiOutputParser } from './kimi-output-parser';
 import {
 	registerOutputParser,
 	clearParserRegistry,
@@ -81,6 +83,8 @@ export { QwenOutputParser } from './qwen-output-parser';
 export { OmpOutputParser } from './omp-output-parser';
 export { GrokOutputParser } from './grok-output-parser';
 export { AntigravityOutputParser } from './antigravity-output-parser';
+export { CursorOutputParser } from './cursor-output-parser';
+export { KimiOutputParser } from './kimi-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
 
@@ -103,6 +107,8 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new OmpOutputParser());
 	registerOutputParser(new GrokOutputParser());
 	registerOutputParser(new AntigravityOutputParser());
+	registerOutputParser(new CursorOutputParser());
+	registerOutputParser(new KimiOutputParser());
 
 	// Log registered parsers for debugging
 	const registeredParsers = getAllOutputParsers().map((p) => p.agentId);

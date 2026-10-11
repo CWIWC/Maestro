@@ -22,6 +22,7 @@ export const KNOWN_AGENT_RUN_PROVIDERS = [
 	'qwen-coder',
 	'omp',
 	'cursor',
+	'kimi',
 	'unknown',
 ] as const;
 

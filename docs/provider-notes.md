@@ -1,6 +1,6 @@
 ---
 title: Provider Notes
-description: Feature differences between Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI, Hermes, Pi, Qwen3 Coder, and Oh My Pi providers.
+description: Feature differences between Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI, Cursor CLI, Kimi Code, Hermes, Pi, Qwen3 Coder, and Oh My Pi providers.
 icon: puzzle
 ---
 
@@ -199,6 +199,45 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 **Notes**:
 
 - [Qwen3 Coder](https://github.com/QwenLM/qwen-code) is Alibaba's Qwen Code agent, a Gemini CLI fork. It is multi-provider, so any model id works (for example `qwen3-coder-plus` or an OpenAI-compatible id); leave the model blank for the account default.
+
+## Cursor CLI
+
+| Feature            | Support                                   |
+| ------------------ | ----------------------------------------- |
+| Image attachments  | ❌ No image flag                          |
+| Session resume     | ✅ `--resume <chatId>`                    |
+| Read-only mode     | ✅ `--mode ask`                           |
+| Slash commands     | ❌ Interactive TUI only                   |
+| Cost tracking      | ❌ Not reported in stream-json            |
+| Model selection    | ✅ `--model` (`cursor-agent models`)      |
+| Context operations | ✅ Merge via prompt; no transcript export |
+| Thinking display   | ✅ Streaming assistant deltas             |
+
+**Notes**:
+
+- [Cursor CLI](https://cursor.com/docs/cli/overview) is Cursor's coding agent. The installer links it as both `cursor-agent` and `agent`; Maestro looks up `cursor-agent` so a different `agent` binary is not selected.
+- Authenticate with `cursor-agent login` (or set `CURSOR_API_KEY`) before creating an agent. Full Access runs pass `--force` and `--trust` so a headless turn does not stop on approval or workspace-trust prompts. Read-only runs use `--mode ask`.
+- The stream does not include token counts, so the context gauge uses the Context Window Size setting (default 200,000).
+
+## Kimi Code
+
+| Feature            | Support                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| Image attachments  | ❌ No image flag                                                        |
+| Session resume     | ✅ `--session <id>` (from the print stream's `session.resume_hint`)    |
+| Read-only mode     | ❌ Print mode cannot take `--plan`                                      |
+| Slash commands     | ❌ Interactive TUI only                                                 |
+| Cost tracking      | ❌ Not reported in stream-json                                          |
+| Model selection    | ✅ `--model` (`kimi provider list`)                                     |
+| Context operations | ✅ Merge via prompt; no transcript export                               |
+| Thinking display   | ⚠️ Assistant text only; reasoning is not on the JSONL stream           |
+
+**Notes**:
+
+- [Kimi Code CLI](https://moonshotai.github.io/kimi-code/) is Moonshot's coding agent (`kimi`). Authenticate with `kimi login` before creating an agent.
+- Print mode is `kimi -p` with `--output-format stream-json`. Do not pass `--auto`, `--yolo`, or `--plan` together with `-p`: the process exits before the prompt. `-p` already runs under the auto permission policy.
+- The working directory is the process cwd. There is no `--workspace` flag. Extra directories use repeatable `--add-dir`.
+- The stream does not include token counts, so the context gauge uses the Context Window Size setting (default 1,048,576, the `kimi-code/kimi-for-coding` window). Smaller aliases are 262,144.
 
 ## Oh My Pi
 

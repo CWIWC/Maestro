@@ -54,6 +54,12 @@ export const AGENT_ICONS: Record<string, string> = {
 	// agent state color in the Left Bar.
 	grok: '✕',
 
+	// Cursor CLI
+	cursor: '➤',
+
+	// Kimi Code. Crescent (U+263E), a text symbol rather than a color emoji.
+	kimi: '☾',
+
 	// Enterprise
 	'factory-droid': '🏭',
 

@@ -517,6 +517,85 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
 	},
+
+	/**
+	 * Cursor CLI - Cursor's coding agent (`cursor-agent` / `agent`)
+	 *
+	 * Capabilities checked against `cursor-agent --help` 2026.10.01-e373342 and
+	 * the stream-json reference at cursor.com/docs/cli/reference/output-format.
+	 * Headless runs require `agent login` or CURSOR_API_KEY. The stream carries
+	 * a session id and tool calls, and no token usage or cost.
+	 */
+	cursor: {
+		supportsResume: true, // --resume <chatId>
+		supportsReadOnlyMode: true, // --mode ask (read-only Q&A; --mode plan is the planning variant)
+		supportsJsonOutput: true, // --print --output-format stream-json
+		supportsSessionId: true, // session_id on the init event and every later event
+		supportsImageInput: false, // No image flag in cursor-agent --help
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false, // Slash commands live in the interactive TUI, which Maestro does not drive
+		supportsSessionStorage: false, // Chats are resumed by id; on-disk transcript browsing is not wired
+		supportsCostTracking: false, // Documented result event has duration, not cost
+		supportsUsageStats: false, // Documented result event has no token counts
+		supportsBatchMode: true, // --print
+		requiresPromptToStart: true, // Headless --print needs a prompt; no interactive PTY integration
+		supportsStreaming: true, // --stream-partial-output emits text deltas
+		supportsResultMessages: true, // terminal result event
+		supportsModelSelection: true, // --model; `cursor-agent models` lists the account catalog
+		supportsStreamJsonInput: false, // No --input-format stream-json
+		supportsPromptViaStdin: false, // Prompt is a positional argument; unverified stdin would drop it on Windows
+		supportsThinkingDisplay: true, // Assistant deltas feed the live preview; print mode suppresses thinking events
+		supportsContextMerge: true, // Merged context is delivered in the prompt
+		supportsContextExport: false, // No session-storage export
+		supportsWizard: true,
+		supportsGroupChatModeration: true,
+		usesJsonLineOutput: true, // stream-json is one JSON object per line; also gates CLI batch spawning
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false, // No --append-system-prompt in cursor-agent --help
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: true, // --add-dir <path>, repeatable
+	},
+
+	/**
+	 * Kimi Code CLI (`kimi`)
+	 *
+	 * Capabilities checked against `kimi --help` 0.43.1 and one live
+	 * `kimi -p --output-format stream-json` turn. Print mode already uses the
+	 * auto permission policy and rejects `--yolo`, `--auto`, and `--plan`, so
+	 * there is no read-only flag to pass. The closing stream event
+	 * `session.resume_hint` carries `session_id`. Thinking is not on the JSONL
+	 * stream, and the providers payload from `kimi provider list --json`
+	 * includes credentials that model discovery must drop.
+	 */
+	kimi: {
+		supportsResume: true, // --session <session_id> from session.resume_hint
+		supportsReadOnlyMode: false, // -p cannot be combined with --plan; print mode is already auto
+		supportsJsonOutput: true, // -p --output-format stream-json
+		supportsSessionId: true, // session_id on the closing session.resume_hint meta event
+		supportsImageInput: false, // Models accept images; the CLI has no image flag
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false, // Slash commands live in the interactive TUI, which Maestro does not drive
+		supportsSessionStorage: false, // Resume uses the id from the stream; transcript browsing is not wired
+		supportsCostTracking: false, // stream-json has no cost field
+		supportsUsageStats: false, // stream-json has no token counts
+		supportsBatchMode: true, // -p
+		requiresPromptToStart: true, // Headless -p needs a prompt; no interactive PTY integration
+		supportsStreaming: true, // Assistant messages arrive as JSONL chunks (whole messages, not token deltas)
+		supportsResultMessages: true, // A content-only assistant message is the turn's answer
+		supportsModelSelection: true, // --model; aliases come from `kimi provider list --json`
+		supportsStreamJsonInput: false, // No --input-format stream-json
+		supportsPromptViaStdin: false, // The prompt is the -p flag; unverified stdin would drop it on Windows
+		supportsThinkingDisplay: true, // Assistant message text feeds the live preview; reasoning is not on the stream
+		supportsContextMerge: true, // Merged context is delivered in the prompt
+		supportsContextExport: false, // No session-storage export
+		supportsWizard: true,
+		supportsGroupChatModeration: true,
+		usesJsonLineOutput: true, // stream-json is one JSON object per line; also gates CLI batch spawning
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false, // No --append-system-prompt in kimi --help
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: true, // --add-dir <path>, repeatable
+	},
 };
 
 /**

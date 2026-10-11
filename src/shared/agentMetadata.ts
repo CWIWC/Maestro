@@ -28,6 +28,8 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'copilot-cli': 'Copilot-CLI',
 	omp: 'Oh My Pi',
 	grok: 'Grok CLI',
+	cursor: 'Cursor CLI',
+	kimi: 'Kimi Code',
 };
 
 /**
@@ -142,6 +144,8 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'omp',
 	'grok',
 	'antigravity',
+	'cursor',
+	'kimi',
 ]);
 
 /**
@@ -186,6 +190,8 @@ export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
 	'copilot-cli': { description: "GitHub's AI coding assistant", brandColor: '#24292F' },
 	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
 	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
+	cursor: { description: "Cursor's coding agent CLI", brandColor: '#E8E8E8' },
+	kimi: { description: "Moonshot's Kimi Code CLI", brandColor: '#A5B4FC' },
 	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
 	omp: { description: 'Multi-model coding agent', brandColor: '#9B4DFF' },
 	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
@@ -277,6 +283,9 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	// cached by one interactive sign-in, so the bare TUI is the whole flow.
 	antigravity: { binary: 'agy', args: '' },
 	grok: { binary: 'grok', args: 'login' },
+	cursor: { binary: 'cursor-agent', args: 'login' },
+	// Device-code login. Works from an SSH remote without a browser callback.
+	kimi: { binary: 'kimi', args: 'login' },
 	hermes: null,
 	pi: null,
 	omp: null,

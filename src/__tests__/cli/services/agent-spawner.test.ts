@@ -1740,6 +1740,101 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-resume-1');
 		});
 
+		it('should spawn cursor headless with --print, stream-json, and the result text', async () => {
+			const resultPromise = spawnAgent('cursor', '/project', 'Hello cursor');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(String(cmd)).toMatch(/cursor-agent$/);
+			expect(args).toEqual(
+				expect.arrayContaining([
+					'--print',
+					'--trust',
+					'--stream-partial-output',
+					'--force',
+					'--output-format',
+					'stream-json',
+					'--',
+					'Hello cursor',
+				])
+			);
+
+			const sessionId = 'cursor-sess-1';
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'system',
+						subtype: 'init',
+						session_id: sessionId,
+						model: 'Composer',
+					}) +
+						'\n' +
+						JSON.stringify({
+							type: 'assistant',
+							timestamp_ms: 1,
+							session_id: sessionId,
+							message: { content: [{ type: 'text', text: 'Hi' }] },
+						}) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							subtype: 'success',
+							is_error: false,
+							result: 'Hi there',
+							session_id: sessionId,
+						}) +
+						'\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Hi there');
+			expect(result.agentSessionId).toBe(sessionId);
+		});
+
+		it('should spawn kimi headless with -p, stream-json, and the resume hint session id', async () => {
+			const resultPromise = spawnAgent('kimi', '/project', 'Reply with exactly: pong');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(String(cmd)).toMatch(/kimi$/);
+			expect(args).toContain('-p');
+			expect(args).toContain('Reply with exactly: pong');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('stream-json');
+			expect(args).not.toContain('--');
+			expect(args).not.toContain('--auto');
+			expect(args).not.toContain('--yolo');
+			expect(args).not.toContain('--plan');
+
+			const sessionId = 'session_c5333536-b1a1-4a02-9e37-02713b864ddc';
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({ role: 'assistant', content: 'pong' }) +
+						'\n' +
+						JSON.stringify({
+							role: 'meta',
+							type: 'session.resume_hint',
+							session_id: sessionId,
+							content: `To resume this session: kimi -r ${sessionId}`,
+						}) +
+						'\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('pong');
+			expect(result.agentSessionId).toBe(sessionId);
+		});
+
 		it('should spawn grok headless with -p, --always-approve, streaming-json and accumulate text deltas', async () => {
 			const resultPromise = spawnAgent('grok', '/project', 'Hello grok');
 			await new Promise((resolve) => setTimeout(resolve, 0));

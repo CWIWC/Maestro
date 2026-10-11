@@ -529,6 +529,28 @@ describe('additionalDirArgs', () => {
 		]);
 	});
 
+	it('cursor: --add-dir adds a workspace root, so every granted dir maps', () => {
+		expect(argsFor('cursor')).toEqual([
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/out/drop',
+			'--add-dir',
+			'/shared/src',
+		]);
+	});
+
+	it('kimi: --add-dir grants the directory, so every granted dir maps', () => {
+		expect(argsFor('kimi')).toEqual([
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/out/drop',
+			'--add-dir',
+			'/shared/src',
+		]);
+	});
+
 	it('copilot-cli: same access semantics as Claude Code', () => {
 		expect(argsFor('copilot-cli')).toEqual([
 			'--add-dir',

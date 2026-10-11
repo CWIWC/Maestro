@@ -22,6 +22,8 @@ import { QwenOutputParser } from './qwen-output-parser';
 import { OmpOutputParser } from './omp-output-parser';
 import { GrokOutputParser } from './grok-output-parser';
 import { AntigravityOutputParser } from './antigravity-output-parser';
+import { CursorOutputParser } from './cursor-output-parser';
+import { KimiOutputParser } from './kimi-output-parser';
 
 const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	'claude-code': () => new ClaudeOutputParser(),
@@ -34,6 +36,8 @@ const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	omp: () => new OmpOutputParser(),
 	grok: () => new GrokOutputParser(),
 	antigravity: () => new AntigravityOutputParser(),
+	cursor: () => new CursorOutputParser(),
+	kimi: () => new KimiOutputParser(),
 };
 
 /**

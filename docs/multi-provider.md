@@ -310,7 +310,7 @@ for the per-provider variables and the limits of that approach.
 
 ## Other Providers
 
-Factory Droid, Grok, Qwen3 Coder, Antigravity, Hermes, Oh My Pi, and Pi have no
+Factory Droid, Grok, Cursor CLI, Kimi Code, Qwen3 Coder, Antigravity, Hermes, Oh My Pi, and Pi have no
 account-selecting variable that Maestro knows about. Their agents each show a
 single profile. If one of them grows a config-directory variable, it belongs in
 the table at the top of this page.

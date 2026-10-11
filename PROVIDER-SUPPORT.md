@@ -1161,6 +1161,116 @@ grok --cwd /path/to/project --output-format streaming-json --permission-mode pla
 
 ---
 
+### Cursor CLI ✅ Implemented
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). Flags checked against `cursor-agent --help` 2026.10.01. Stream shape follows the [stream-json reference](https://cursor.com/docs/cli/reference/output-format).
+
+| Aspect           | Value                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| Binary           | `cursor-agent` (the installer also links `agent`; Maestro probes `cursor-agent`)                    |
+| JSON Output      | `--print --output-format stream-json --stream-partial-output`                                       |
+| Batch Mode       | `--print` with the prompt after `--`                                                                |
+| Resume           | `--resume <chatId>`                                                                                 |
+| Read-only        | `--mode ask` (CLI-enforced; `--mode plan` is the planning variant)                                  |
+| YOLO Mode        | `--force --approve-mcps`, plus `--trust` so headless runs do not stop on the workspace trust prompt |
+| Session ID Field | `session_id` on the init event and every later event                                                |
+| Session Storage  | Not wired. Resume uses the id from the stream                                                       |
+| Context Window   | 200K default; user-configurable. The stream does not report a window                                |
+| Model Selection  | `--model <id>`; dynamic discovery via `cursor-agent models`                                         |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/cursor-output-parser.ts`
+- ✅ Error Patterns: `src/shared/agentErrorPatterns.ts` (auth, rate limit, network, context, missing session)
+- ✅ Capabilities: resume, read-only, streaming, tool calls, result messages, model selection, batch mode, additional directories (`--add-dir`), inline wizard, group-chat moderation
+- ❌ Session storage browser, cost tracking, and token usage (the documented result event has duration only)
+
+**JSON Event Types:**
+
+- `system` / `init` → session id
+- `assistant` → text. With `--stream-partial-output`, only events that have `timestamp_ms` and no `model_call_id` are new text
+- `tool_call` `started` / `completed` → tool badge (`readToolCall` → Read, and so on)
+- `result` → canonical answer (`result`) and session id. `subtype: "error"` or `is_error: true` is a failure
+
+**Known Limitations:**
+
+- **Interactive TUI is not wired.** Maestro drives Cursor in `--print` mode only
+- **No image flag** in `cursor-agent --help`
+- **No token usage or cost** in the documented stream, so the context gauge uses the configured window
+- **Login is required.** `cursor-agent login` or `CURSOR_API_KEY`. A logged-out run exits with `Authentication required`
+
+**Command Line Pattern:**
+
+```bash
+# Basic batch execution (Maestro's default composition)
+cursor-agent --workspace /path/to/project --print --trust --stream-partial-output --force --approve-mcps --output-format stream-json -- "prompt"
+
+# Resume a session
+cursor-agent --print --trust --force --output-format stream-json --resume <chat-id> -- "continue"
+
+# Read-only
+cursor-agent --print --trust --output-format stream-json --mode ask -- "prompt"
+```
+
+---
+
+### Kimi Code CLI ✅ Implemented
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). Flags checked against `kimi --help` 0.43.1 and one live `kimi -p --output-format stream-json` turn. Stream shape follows the [kimi command reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-command.html).
+
+| Aspect           | Value                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| Binary           | `kimi` (probed at `~/.kimi-code/bin/kimi`, then `~/.local/bin/kimi`)                           |
+| JSON Output      | `-p --output-format stream-json`                                                               |
+| Batch Mode       | `-p "<prompt>"`. Print mode already uses the auto permission policy                            |
+| Resume           | `--session <session_id>` from the stream's `session.resume_hint`                               |
+| Read-only        | Not available. `--plan` cannot be combined with `-p`                                           |
+| YOLO Mode        | Not passed. `--yolo` and `--auto` cannot be combined with `-p`                                 |
+| Session ID Field | `session_id` on `{"role":"meta","type":"session.resume_hint"}`                                 |
+| Session Storage  | Not wired. Resume uses the id from the stream                                                  |
+| Context Window   | 1,048,576 default (`kimi-code/kimi-for-coding`); smaller aliases are 262,144                   |
+| Model Selection  | `--model <alias>`; dynamic discovery via `kimi provider list --json` (model keys only)        |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/kimi-output-parser.ts`
+- ✅ Error Patterns: `src/shared/agentErrorPatterns.ts` (auth, rate limit, network, context, missing session)
+- ✅ Capabilities: resume, streaming, tool calls, result messages, model selection, batch mode, additional directories (`--add-dir`), inline wizard, group-chat moderation
+- ❌ Read-only mode, session storage browser, cost tracking, token usage, and image input
+
+**JSON Event Types:**
+
+- `role: assistant` with `content` and no `tool_calls` → answer text
+- `role: assistant` with `tool_calls` → narration plus running tool calls (not the answer)
+- `role: tool` → completed tool result (`tool_call_id`)
+- `role: meta`, `type: session.resume_hint` → `session_id` (`session_<uuid>`). Its `content` is a resume command, not answer text
+- `role: meta`, `type: system.version` → ignored as answer text
+- Non-JSON lines are ignored
+
+**Known Limitations:**
+
+- **Interactive TUI is not wired.** Maestro drives Kimi Code with `-p` only
+- **No read-only flag.** Print mode rejects `--plan`, `--yolo`, and `--auto`
+- **No image flag** in `kimi --help`
+- **No token usage or cost** on the JSONL stream, so the context gauge uses the configured window
+- **Login is required.** `kimi login`. Model discovery parses `kimi provider list --json` and keeps only `models` keys; the `providers` object contains credentials and must not be logged
+- **Working directory is the process cwd.** There is no `--workspace` flag
+
+**Command Line Pattern:**
+
+```bash
+# Basic batch execution (Maestro's default composition)
+kimi --output-format stream-json -p "prompt"
+
+# Resume a session
+kimi --output-format stream-json --session session_<uuid> -p "continue"
+
+# Model and an extra directory
+kimi --output-format stream-json --model kimi-code/kimi-for-coding --add-dir /other/project -p "prompt"
+```
+
+---
+
 ### Antigravity CLI ✅ Implemented (unverified against a live binary)
 
 **Status:** Beta (marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)

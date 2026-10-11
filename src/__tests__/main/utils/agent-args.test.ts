@@ -884,6 +884,132 @@ describe('buildAgentArgs', () => {
 			});
 		});
 
+		describe('Cursor CLI: desktop spawn path composition (real definition)', () => {
+			const cursorDef = getAgentDefinition('cursor');
+			const cursor = {
+				...cursorDef,
+				available: true,
+				capabilities: {} as AgentConfig['capabilities'],
+			} as AgentConfig;
+
+			function compose(options: {
+				prompt: string;
+				cwd?: string;
+				agentSessionId?: string;
+				readOnlyMode?: boolean;
+				yoloMode?: boolean;
+			}): string[] {
+				return buildAgentArgs(cursor, {
+					baseArgs: cursor.args,
+					prompt: options.prompt,
+					cwd: options.cwd,
+					readOnlyMode: options.readOnlyMode,
+					yoloMode: options.yoloMode,
+					agentSessionId: options.agentSessionId,
+				});
+			}
+
+			it('full access stays headless and dedupes --force', () => {
+				const result = compose({ prompt: 'do it', cwd: '/project', yoloMode: true });
+
+				expect(result).toEqual(
+					expect.arrayContaining([
+						'--print',
+						'--trust',
+						'--stream-partial-output',
+						'--force',
+						'--approve-mcps',
+						'--output-format',
+						'stream-json',
+						'--workspace',
+						'/project',
+					])
+				);
+				expect(result.filter((arg) => arg === '--force')).toHaveLength(1);
+				expect(result).not.toContain('--mode');
+			});
+
+			it('read-only keeps --print and --trust, drops --force, and sets --mode ask', () => {
+				const result = compose({ prompt: 'look around', cwd: '/project', readOnlyMode: true });
+
+				expect(result).toContain('--print');
+				expect(result).toContain('--trust');
+				expect(result).toContain('--output-format');
+				expect(result[result.indexOf('--output-format') + 1]).toBe('stream-json');
+				expect(result).not.toContain('--force');
+				expect(result).not.toContain('--approve-mcps');
+				expect(result.filter((arg) => arg === '--mode')).toHaveLength(1);
+				expect(result[result.indexOf('--mode') + 1]).toBe('ask');
+			});
+
+			it('resume passes the chat id to --resume', () => {
+				const result = compose({ prompt: 'continue', agentSessionId: 'chat-1', yoloMode: true });
+				expect(result[result.indexOf('--resume') + 1]).toBe('chat-1');
+			});
+		});
+
+		describe('Kimi Code: desktop spawn path composition (real definition)', () => {
+			const kimiDef = getAgentDefinition('kimi');
+			const kimi = {
+				...kimiDef,
+				available: true,
+				capabilities: {} as AgentConfig['capabilities'],
+			} as AgentConfig;
+
+			/** Mirror the desktop handler: buildAgentArgs, then promptArgs last. */
+			function compose(options: {
+				prompt: string;
+				cwd?: string;
+				agentSessionId?: string;
+				readOnlyMode?: boolean;
+				yoloMode?: boolean;
+				modelId?: string;
+			}): string[] {
+				const built = buildAgentArgs(kimi, {
+					baseArgs: kimi.args,
+					prompt: options.prompt,
+					cwd: options.cwd,
+					readOnlyMode: options.readOnlyMode,
+					yoloMode: options.yoloMode,
+					agentSessionId: options.agentSessionId,
+					modelId: options.modelId,
+				});
+				return kimi.promptArgs ? [...built, ...kimi.promptArgs(options.prompt)] : built;
+			}
+
+			it('print mode is -p and stream-json, with no permission flags', () => {
+				const result = compose({ prompt: 'Reply with exactly: pong', cwd: '/project', yoloMode: true });
+
+				expect(result).toContain('-p');
+				expect(result[result.indexOf('-p') + 1]).toBe('Reply with exactly: pong');
+				expect(result).toContain('--output-format');
+				expect(result[result.indexOf('--output-format') + 1]).toBe('stream-json');
+				expect(result).not.toContain('--');
+				expect(result).not.toContain('--auto');
+				expect(result).not.toContain('--yolo');
+				expect(result).not.toContain('--plan');
+				expect(result).not.toContain('--force');
+				expect(result).not.toContain('--workspace');
+			});
+
+			it('read-only still cannot pass --plan', () => {
+				const result = compose({ prompt: 'look around', readOnlyMode: true });
+				expect(result).not.toContain('--plan');
+				expect(result).not.toContain('--auto');
+				expect(result).toContain('-p');
+			});
+
+			it('resume passes the session id to --session', () => {
+				const result = compose({ prompt: 'continue', agentSessionId: 'session_abc' });
+				expect(result[result.indexOf('--session') + 1]).toBe('session_abc');
+			});
+
+			it('model selection passes --model', () => {
+				const result = compose({ prompt: 'hi', modelId: 'kimi-code/kimi-for-coding' });
+				expect(result[result.indexOf('--model') + 1]).toBe('kimi-code/kimi-for-coding');
+			});
+		});
+
 		it('Factory Droid: readOnly works without extra flags (exec is read-only by default)', () => {
 			const droidAgent = makeAgent({
 				id: 'factory-droid',

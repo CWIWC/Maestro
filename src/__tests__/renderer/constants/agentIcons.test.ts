@@ -11,6 +11,18 @@ import {
 } from '../../../renderer/constants/agentIcons';
 
 describe('agentIcons', () => {
+	it('returns a dedicated icon for cursor (not the default fallback)', () => {
+		expect(AGENT_ICONS.cursor).toBeDefined();
+		expect(getAgentIcon('cursor')).toBe(AGENT_ICONS.cursor);
+		expect(getAgentIcon('cursor')).not.toBe(DEFAULT_AGENT_ICON);
+	});
+
+	it('returns a dedicated icon for kimi (not the default fallback)', () => {
+		expect(AGENT_ICONS.kimi).toBeDefined();
+		expect(getAgentIcon('kimi')).toBe(AGENT_ICONS.kimi);
+		expect(getAgentIcon('kimi')).not.toBe(DEFAULT_AGENT_ICON);
+	});
+
 	it('returns a dedicated icon for grok (not the default fallback)', () => {
 		expect(AGENT_ICONS.grok).toBeDefined();
 		expect(getAgentIcon('grok')).toBe(AGENT_ICONS.grok);

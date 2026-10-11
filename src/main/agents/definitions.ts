@@ -923,6 +923,117 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 		],
 	},
+	{
+		id: 'cursor',
+		name: 'Cursor CLI',
+		// The installer links both `agent` and `cursor-agent` at the same binary.
+		// Probe the specific name so a unrelated `agent` on PATH is not selected.
+		binaryName: 'cursor-agent',
+		command: 'cursor-agent',
+		args: [],
+		requiresPty: false,
+		// Headless only, same shape as Grok: one --print invocation per turn.
+		// The interactive TUI is not wired into Maestro's terminal.
+		//
+		// Verified against `cursor-agent --help` 2026.10.01-e373342.
+		// Batch: cursor-agent --print --trust --stream-partial-output --force
+		//        --approve-mcps --output-format stream-json --workspace <dir> -- <prompt>
+		//
+		// --print and --trust stay in the prefix so read-only mode (which strips
+		// batchModeArgs) still runs headless and does not stop on the workspace
+		// trust prompt. --force / --approve-mcps are the unattended grants and
+		// match yoloModeArgs so the read-only filter removes both.
+		batchModePrefix: ['--print', '--trust', '--stream-partial-output'],
+		batchModeArgs: ['--force', '--approve-mcps'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		// --mode ask is read-only Q&A. --mode plan is also read-only but drafts
+		// an implementation plan; ask matches Maestro's "won't modify files" toggle.
+		readOnlyArgs: ['--mode', 'ask'],
+		readOnlyCliEnforced: true,
+		yoloModeArgs: ['--force', '--approve-mcps'],
+		workingDirArgs: (dir: string) => ['--workspace', dir],
+		// --add-dir adds another workspace root (read + write). Same coarseness
+		// as Claude Code / Copilot: the prompt still carries read-vs-write nuance.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+		modelArgs: (modelId: string) => {
+			const trimmed = modelId.trim();
+			return trimmed ? ['--model', trimmed] : [];
+		},
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select',
+				label: 'Model',
+				description:
+					'Model to use (see `cursor-agent models`). Leave empty for the account default.',
+				dynamic: true,
+				options: ['', 'composer-2.5', 'gpt-5', 'sonnet-4-thinking'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model.',
+				default: 200000,
+			},
+		],
+	},
+	{
+		id: 'kimi',
+		name: 'Kimi Code',
+		binaryName: 'kimi',
+		command: 'kimi',
+		args: [],
+		requiresPty: false,
+		// Headless only: one `kimi -p` invocation per turn. The interactive TUI
+		// is not wired into Maestro's terminal.
+		//
+		// Verified against `kimi --help` 0.43.1 and a live print turn.
+		// Batch: kimi --output-format stream-json -p "<prompt>"
+		//
+		// `-p` already runs under the auto permission policy (writes and shell;
+		// static deny rules still apply). Print mode rejects `--yolo`, `--auto`,
+		// and `--plan` at startup, so none of those flags are passed. There is
+		// no `--workspace` flag: the working directory is the process cwd.
+		batchModePrefix: [],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		// The print stream's closing `session.resume_hint` carries `session_id`
+		// (`session_<uuid>`). `--session` is the documented resume flag; `-r`
+		// is the same option.
+		resumeArgs: (sessionId: string) => ['--session', sessionId],
+		// `--add-dir` grants the directory (read and write). Same coarseness as
+		// Claude Code: the prompt still carries read-vs-write nuance.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+		modelArgs: (modelId: string) => {
+			const trimmed = modelId.trim();
+			return trimmed ? ['--model', trimmed] : [];
+		},
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select',
+				label: 'Model',
+				description:
+					'Model alias (see `kimi provider list`). Leave empty for the account default (kimi-code/kimi-for-coding).',
+				dynamic: true,
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. The default alias kimi-code/kimi-for-coding is 1048576. Smaller aliases are 262144.',
+				default: 1048576,
+			},
+		],
+	},
 ];
 
 /**

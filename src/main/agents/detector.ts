@@ -620,7 +620,9 @@ export class AgentDetector {
 		// A transient `omp models --json` failure returns an empty list. Don't cache
 		// that, or the picker stays empty for the whole TTL even after the CLI
 		// recovers; let the next call retry. (omp always has a non-empty catalog.)
-		if (agentId === 'omp' && models.length === 0) {
+		// Don't cache an empty catalog for agents whose listing command fails closed
+		// until the user is logged in (Cursor, Kimi Code) or the CLI blips (Oh My Pi).
+		if ((agentId === 'omp' || agentId === 'cursor' || agentId === 'kimi') && models.length === 0) {
 			return models;
 		}
 
@@ -843,6 +845,61 @@ export class AgentDetector {
 						}
 					}
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT);
+					return models;
+				}
+
+				case 'kimi': {
+					// `kimi provider list --json` is `{ providers, models }`. The
+					// providers object holds account credentials, so only the model
+					// alias keys are kept. Never log the raw stdout.
+					const result = await execFileNoThrow(command, ['provider', 'list', '--json'], undefined, env);
+					if (result.exitCode !== 0 && !result.stdout.trim()) {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT
+						);
+						return [];
+					}
+					let parsed: unknown;
+					try {
+						parsed = JSON.parse(result.stdout);
+					} catch {
+						logger.warn(
+							`CLI model discovery for ${agentId} did not return JSON (exit ${result.exitCode})`,
+							LOG_CONTEXT
+						);
+						return [];
+					}
+					const modelsValue =
+						parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+							? (parsed as { models?: unknown }).models
+							: undefined;
+					if (!modelsValue || typeof modelsValue !== 'object' || Array.isArray(modelsValue)) {
+						return [];
+					}
+					const models = Object.keys(modelsValue).filter((key) => key.trim().length > 0);
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, { models });
+					return models;
+				}
+
+				case 'cursor': {
+					// `cursor-agent models` prints one model id per line when authenticated.
+					// Logged-out runs print "Authentication required..." and may still exit 0,
+					// so reject any line that isn't a single token.
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					if (result.exitCode !== 0 && !result.stdout.trim()) {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+					const models = result.stdout
+						.split('\n')
+						.map((line) => line.trim())
+						.filter((line) => line.length > 0 && !line.includes(' ') && !line.startsWith('Error:'));
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, { models });
 					return models;
 				}
 
@@ -1070,6 +1127,17 @@ export class AgentDetector {
 								'Could not read Codex models_cache.json for config option discovery',
 								LOG_CONTEXT
 							);
+						}
+					}
+					break;
+				}
+
+				case 'cursor':
+				case 'kimi': {
+					if (optionKey === 'model') {
+						const models = await this.discoverModels(agentId);
+						if (models.length > 0) {
+							return ['', ...models];
 						}
 					}
 					break;

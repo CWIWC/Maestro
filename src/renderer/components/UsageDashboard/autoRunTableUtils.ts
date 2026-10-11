@@ -16,6 +16,8 @@ export function formatAgentName(agentType: string): string {
 		'factory-droid': 'Factory Droid',
 		copilot: 'GitHub Copilot',
 		grok: 'Grok CLI',
+		cursor: 'Cursor CLI',
+		kimi: 'Kimi Code',
 		terminal: 'Terminal',
 	};
 	return names[agentType] || agentType;

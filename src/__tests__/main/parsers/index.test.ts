@@ -13,6 +13,8 @@ import {
 	OmpOutputParser,
 	QwenOutputParser,
 	GrokOutputParser,
+	CursorOutputParser,
+	KimiOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -101,21 +103,37 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('antigravity')).toBe(true);
 		});
 
-		it('should register exactly 10 parsers', () => {
+		it('should register Cursor parser', () => {
+			expect(hasOutputParser('cursor')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('cursor')).toBe(true);
+		});
+
+		it('should register Kimi parser', () => {
+			expect(hasOutputParser('kimi')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('kimi')).toBe(true);
+		});
+
+		it('should register exactly 12 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(10);
+			expect(parsers.length).toBe(12);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(10);
+			expect(getAllOutputParsers().length).toBe(12);
 
-			// Second initialization should still have exactly 10
+			// Second initialization should still have exactly 12
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(10);
+			expect(getAllOutputParsers().length).toBe(12);
 		});
 	});
 
@@ -180,6 +198,18 @@ describe('parsers/index', () => {
 			expect(parser).not.toBeNull();
 			expect(parser).toBeInstanceOf(GrokOutputParser);
 		});
+
+		it('should return CursorOutputParser for cursor', () => {
+			const parser = getOutputParser('cursor');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(CursorOutputParser);
+		});
+
+		it('should return KimiOutputParser for kimi', () => {
+			const parser = getOutputParser('kimi');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(KimiOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -220,6 +250,16 @@ describe('parsers/index', () => {
 		it('should export GrokOutputParser class', () => {
 			const parser = new GrokOutputParser();
 			expect(parser.agentId).toBe('grok');
+		});
+
+		it('should export CursorOutputParser class', () => {
+			const parser = new CursorOutputParser();
+			expect(parser.agentId).toBe('cursor');
+		});
+
+		it('should export KimiOutputParser class', () => {
+			const parser = new KimiOutputParser();
+			expect(parser.agentId).toBe('kimi');
 		});
 	});
 

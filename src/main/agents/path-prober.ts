@@ -431,6 +431,16 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			...localBin('omp'),
 		],
+		'cursor-agent': [
+			// Official Windows installer drops the CLI in the user local bin
+			...localBin('cursor-agent'),
+			path.join(localAppData, 'cursor-agent', 'cursor-agent.exe'),
+		],
+		kimi: [
+			// Kimi Code CLI installer
+			path.join(home, '.kimi-code', 'bin', 'kimi.exe'),
+			...localBin('kimi'),
+		],
 		agy: [
 			// Official install.ps1 / install.cmd target
 			path.join(localAppData, 'agy', 'bin', 'agy.exe'),
@@ -601,6 +611,16 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			path.join(home, 'bin', 'omp'),
 			...nodeVersionManagers('omp'),
+		],
+		'cursor-agent': [
+			// Official Cursor CLI installer (install script links cursor-agent here)
+			...localBin('cursor-agent'),
+			path.join(home, 'bin', 'cursor-agent'),
+		],
+		kimi: [
+			// Kimi Code CLI installer (preferred over a stray `kimi` on PATH)
+			path.join(home, '.kimi-code', 'bin', 'kimi'),
+			...localBin('kimi'),
 		],
 		agy: [
 			// Official install.sh target on macOS/Linux

@@ -1598,6 +1598,123 @@ const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 };
 
+const CURSOR_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			// Verified: `cursor-agent models` while logged out prints
+			// "Authentication required. Run 'agent login', pass --api-key/--auth-token,
+			// or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN."
+			pattern: /authentication required|not logged in|agent login|invalid api key|cursor_api_key/i,
+			message: 'Not authenticated. Run "cursor-agent login" or set CURSOR_API_KEY.',
+			recoverable: true,
+		},
+		{
+			pattern:
+				/unauthorized.*(?:request|access)|(?:request|access).*unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
+			message: 'Unauthorized. Run "cursor-agent login" to re-authenticate.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|quota exceeded/i,
+			message: 'Cursor rate limit exceeded. Wait and try again.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern:
+				/connection (?:failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|network error/i,
+			message: 'Cursor CLI could not reach the API. Check your network connection.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern:
+				/context (?:window|length|limit).*(?:exceeded|too long)|prompt.*too (?:long|large)|maximum.*tokens/i,
+			message: 'Context window exceeded. Start a new Cursor session.',
+			recoverable: true,
+		},
+	],
+	session_not_found: [
+		{
+			pattern: /session.*not found|chat.*not found|no such (?:session|chat)|unable to resume/i,
+			message: 'Cursor session not found. Starting a fresh conversation.',
+			recoverable: true,
+		},
+	],
+	permission_denied: [
+		{
+			pattern: /permission (?:denied|required)|not allowed to|sandbox.*denied/i,
+			message:
+				'A tool call was denied. Full Access mode passes --force so headless runs are not prompted.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /internal (?:error|server error)|unexpected error|fatal error/i,
+			message: 'Cursor CLI hit an internal error. Try again.',
+			recoverable: true,
+		},
+	],
+};
+
+const KIMI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern:
+				/not logged in|authentication required|kimi login|invalid api key|unauthorized|http\s*401|status(?:\s+code)?\s*401/i,
+			message: 'Not authenticated. Run "kimi login" to sign in.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|quota exceeded/i,
+			message: 'Kimi Code rate limit exceeded. Wait and try again.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network error|fetch failed|getaddrinfo/i,
+			message: 'Could not reach Kimi Code. Check the network and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context length|maximum context|token limit|context window/i,
+			message: 'The prompt exceeded the Kimi Code context window.',
+			recoverable: true,
+		},
+	],
+	session_not_found: [
+		{
+			pattern: /session not found|unknown session|no such session/i,
+			message: 'That Kimi Code session could not be resumed.',
+			recoverable: false,
+		},
+	],
+	permission_denied: [
+		{
+			pattern: /permission denied|access denied/i,
+			message: 'Kimi Code was denied permission for that action.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /panic:|unexpected error|internal server error/i,
+			message: 'Kimi Code crashed unexpectedly.',
+			recoverable: true,
+		},
+	],
+};
+
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
@@ -1609,6 +1726,8 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['omp', OMP_ERROR_PATTERNS],
 	['grok', GROK_ERROR_PATTERNS],
 	['antigravity', ANTIGRAVITY_ERROR_PATTERNS],
+	['cursor', CURSOR_ERROR_PATTERNS],
+	['kimi', KIMI_ERROR_PATTERNS],
 ]);
 
 /**

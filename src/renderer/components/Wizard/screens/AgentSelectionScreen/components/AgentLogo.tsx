@@ -268,6 +268,38 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'cursor':
+			// Cursor ships a pointer mark. This is that arrow, filled, tip at the top left.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path d="M12 6l26 18.5-10.2 2.1 7.2 15.6-6.2 2.8-7.1-15.4-9.7 7.8V6z" fill={color} />
+				</svg>
+			);
+
+		case 'kimi':
+			// A crescent. The second circle punches the right side out of the first.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						fill={color}
+						fillRule="evenodd"
+						d="M18 8a16 16 0 1 0 0 32 16 16 0 0 0 0-32zm8 3.5a14 14 0 1 1 0 25 14 14 0 0 1 0-25z"
+					/>
+				</svg>
+			);
+
 		case 'grok':
 			// xAI ships a wordmark rather than a redistributable glyph; this is its
 			// slashed X - one unbroken diagonal crossed by a second that breaks
