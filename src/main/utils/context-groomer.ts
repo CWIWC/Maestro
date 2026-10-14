@@ -20,6 +20,7 @@ import { wrapSpawnWithSsh, sshUnresolvedRemoteMessage } from './ssh-spawn-wrappe
 import type { SshRemoteSettingsStore } from './ssh-remote-resolver';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
+import { parseEffortRejection } from '../../shared/effortRejection';
 import type { AgentDetector } from '../agents';
 
 const LOG_CONTEXT = '[ContextGroomer]';
@@ -205,6 +206,39 @@ export interface GroomContextResult {
  * @returns Promise resolving to the grooming result
  */
 export async function groomContext(
+	options: GroomContextOptions,
+	processManager: GroomingProcessManager,
+	agentDetector: AgentDetector
+): Promise<GroomContextResult> {
+	try {
+		return await groomContextOnce(options, processManager, agentDetector);
+	} catch (error) {
+		// The provider refused the effort level this turn asked for (see
+		// `shared/effortRejection.ts`). Callers pass an effort Maestro picked off
+		// a static ladder for a throwaway turn, and a provider can retire a rung
+		// without notice - so run it once more at the agent's own effort rather
+		// than lose the summary. Only when an effort was actually sent, so a
+		// refusal of the agent's own configured value cannot loop.
+		const rejection =
+			options.sessionCustomEffort !== undefined && options.sessionCustomEffort !== ''
+				? parseEffortRejection(error instanceof Error ? error.message : String(error))
+				: null;
+		if (!rejection) throw error;
+
+		logger.warn(
+			'Grooming effort rejected by the provider; retrying at the agent default',
+			LOG_CONTEXT,
+			{ agentType: options.agentType, effort: options.sessionCustomEffort, ...rejection }
+		);
+		return groomContextOnce(
+			{ ...options, sessionCustomEffort: undefined },
+			processManager,
+			agentDetector
+		);
+	}
+}
+
+async function groomContextOnce(
 	options: GroomContextOptions,
 	processManager: GroomingProcessManager,
 	agentDetector: AgentDetector

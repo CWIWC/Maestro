@@ -18,6 +18,8 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
+import { parseOsc52 } from '../utils/terminalClipboard';
+import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
 import {
 	createCanvasMeasureAdvance,
@@ -573,6 +575,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.loadAddon(unicode11Addon);
 		term.unicode.activeVersion = '11';
 
+		// OSC 52: the program in the PTY asking the terminal to copy text for it.
+		// xterm.js drops the sequence unless something handles it, so "press c to
+		// copy" in a TUI (and the TUI's own drag-select, which copies the same way)
+		// did nothing at all. Write-only: a clipboard QUERY is consumed and never
+		// answered, since the reply would hand the clipboard to whatever asked.
+		// The flash is not just an ack - it is what keeps a program from replacing
+		// the clipboard without the user seeing it happen.
+		const osc52Disposable = term.parser.registerOscHandler(52, (data) => {
+			const request = parseOsc52(data);
+			if (request.kind === 'write') void copyTextWithFlash(request.text);
+			return true;
+		});
+
 		// Custom link provider: detects URLs, tracks hover for right-click context menu
 		const linkProviderDisposable = term.registerLinkProvider({
 			provideLinks(lineNumber, callback) {
@@ -816,6 +831,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			termElement.removeEventListener('touchstart', handleTouchStart);
 			termElement.removeEventListener('touchend', handleTouchEnd);
 			selectionChangeDisposable.dispose();
+			osc52Disposable.dispose();
 			linkProviderDisposable.dispose();
 			titleChangeDisposable?.dispose();
 			resizeObserver.disconnect();

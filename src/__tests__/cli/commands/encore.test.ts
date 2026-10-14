@@ -93,10 +93,16 @@ describe('encore commands', () => {
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(false);
 	});
 
-	it('resolves friendly aliases (e.g. "group-chat" -> symphony)', async () => {
+	it('resolves friendly aliases (e.g. "maestro-symphony" -> symphony)', async () => {
 		const getPayload = mockSend({ success: true });
-		await encoreSet('group-chat', true, {});
+		await encoreSet('maestro-symphony', true, {});
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(true);
+	});
+
+	it('does not map "group-chat" onto Symphony (Group Chat has no Encore flag)', async () => {
+		await expect(encoreSet('group-chat', false, {})).rejects.toThrow('__exit__');
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Unknown Encore feature'));
+		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 
 	it('lists pianola, defaulting off when unset', () => {

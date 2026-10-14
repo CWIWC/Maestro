@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { stripAllAnsiCodes } from '../../utils/terminalFilter';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
@@ -483,15 +484,13 @@ export class StdoutHandler {
 				// Losing it means recovery from a *recoverable* error silently opens a
 				// fresh conversation and drops the context the retry was supposed to
 				// continue. ExitHandler does the same for the flushed no-newline case.
-				if (parsed !== null) {
-					const event = outputParser.parseJsonObject(parsed);
-					if (event) {
-						this.emitSessionIdIfNeeded(
-							sessionId,
-							managedProcess,
-							outputParser.extractSessionId(event)
-						);
-					}
+				const event = parsed !== null ? outputParser.parseJsonObject(parsed) : null;
+				if (event) {
+					this.emitSessionIdIfNeeded(
+						sessionId,
+						managedProcess,
+						outputParser.extractSessionId(event)
+					);
 				}
 				agentError.sessionId = sessionId;
 				// Tag the error with the remote UUID so downstream listeners
@@ -529,9 +528,18 @@ export class StdoutHandler {
 					return;
 				}
 
-				managedProcess.errorEmitted = true;
 				managedProcess.provisionalError = undefined;
-				this.emitter.emit('agent-error', sessionId, agentError);
+				// A failed terminal envelope (maestro-p's `timeout`, a `claude -p`
+				// error result) ends the turn, so what the agent said before it is
+				// the turn's last output and goes out ahead of the error.
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					agentError,
+					{ flushStreamedText: !!event && outputParser.isResultMessage(event) }
+				);
 				return;
 			}
 		}
@@ -540,10 +548,18 @@ export class StdoutHandler {
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId && parsed === null) {
+		// `!interrupted` for the same reason as the parser branch above: a stopped
+		// turn must not surface as a crash. Whatever a torn-down remote writes on
+		// its way out, raising it here would arm recovery for a turn the user
+		// deliberately abandoned.
+		if (
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			managedProcess.sshRemoteId &&
+			parsed === null
+		) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
-				managedProcess.errorEmitted = true;
 				const agentError: AgentError = {
 					type: sshError.type,
 					message: sshError.message,
@@ -554,7 +570,13 @@ export class StdoutHandler {
 					timestamp: Date.now(),
 					raw: { errorLine: line },
 				};
-				this.emitter.emit('agent-error', sessionId, agentError);
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					agentError
+				);
 				return;
 			}
 		}
@@ -562,19 +584,22 @@ export class StdoutHandler {
 		// ── Held in-turn error notice ──
 		// Not after a Stop: a result the CLI flushes on its way out would otherwise
 		// raise the held notice for a turn the user abandoned. Exit drops it.
-		if (
-			managedProcess.provisionalError &&
+		const settleHeldErrorAfterResult =
+			!!managedProcess.provisionalError &&
 			!managedProcess.interrupted &&
 			parsed !== null &&
-			outputParser
-		) {
+			!!outputParser &&
 			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
-		}
 
 		// ── Process parsed data ──
 		if (parsed !== null) {
 			if (outputParser) {
 				this.handleParsedEvent(sessionId, managedProcess, parsed, outputParser);
+				// After the result, not before it: the renderer reads output that
+				// arrives after an error as recovery and erases the error card.
+				if (settleHeldErrorAfterResult) {
+					settleProvisionalAgentError(this.emitter, this.bufferManager, sessionId, managedProcess);
+				}
 			} else {
 				this.handleLegacyMessage(sessionId, managedProcess, parsed);
 			}
@@ -591,8 +616,9 @@ export class StdoutHandler {
 	/**
 	 * Decide a held in-turn error notice from the line that followed it.
 	 *
-	 * - A result message: the turn ended on the failure. Emit the notice now, so
-	 *   the renderer sees the error before the result it explains.
+	 * - A result message: the turn ended on the failure. Returns true, and the
+	 *   caller emits the notice right after the result's own output, so the
+	 *   result cannot read as recovery and erase it.
 	 * - Model output (text or a tool call): the CLI recovered and the turn goes on.
 	 *   Drop the notice. Raising it was what put a working tab into the blocking
 	 *   error state and queued the user's next message behind a live process.
@@ -604,13 +630,12 @@ export class StdoutHandler {
 		managedProcess: ManagedProcess,
 		parsed: unknown,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
-	): void {
+	): boolean {
 		const event = outputParser.parseJsonObject(parsed);
-		if (!event) return;
+		if (!event) return false;
 
 		if (outputParser.isResultMessage(event)) {
-			settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
-			return;
+			return true;
 		}
 
 		if (event.type === 'text' || event.type === 'tool_use') {
@@ -621,6 +646,7 @@ export class StdoutHandler {
 			);
 			managedProcess.provisionalError = undefined;
 		}
+		return false;
 	}
 
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */

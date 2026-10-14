@@ -76,6 +76,54 @@ describe('open-file command', () => {
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
+	describe('http(s) URLs stream in the media player', () => {
+		function captureSend() {
+			const sent: Array<Record<string, unknown>> = [];
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((msg) => {
+						sent.push(msg);
+						return Promise.resolve({ type: 'open_file_tab_result', success: true });
+					}),
+				};
+				return action(mockClient as never);
+			});
+			return sent;
+		}
+
+		it('sends the URL untouched, skipping the on-disk check', async () => {
+			vi.mocked(existsSync).mockReturnValue(false);
+			const sent = captureSend();
+
+			await openFile('https://cdn.example.com/media/clip.mp4?sig=1', { agent: 'session-123' });
+
+			expect(sent[0].filePath).toBe('https://cdn.example.com/media/clip.mp4?sig=1');
+			expect(sent[0].mediaMode).toBe('play');
+			expect(existsSync).not.toHaveBeenCalled();
+			expect(consoleSpy).toHaveBeenCalledWith('Streaming clip.mp4 in the media player');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('accepts --queue for a URL with no media extension', async () => {
+			const sent = captureSend();
+
+			await openFile('https://example.com/stream?id=7', { agent: 'session-123', queue: true });
+
+			expect(sent[0].mediaMode).toBe('queue');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it("files the URL under the agent owning the shell's cwd when --agent is absent", async () => {
+			const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/home/user/project/sub');
+			const sent = captureSend();
+
+			await openFile('https://example.com/a.mp4', {});
+
+			expect(sent[0].sessionId).toBe('session-123');
+			cwdSpy.mockRestore();
+		});
+	});
+
 	describe('--background vs --no-switch (they are different asks)', () => {
 		function captureMessage() {
 			vi.mocked(existsSync).mockReturnValue(true);

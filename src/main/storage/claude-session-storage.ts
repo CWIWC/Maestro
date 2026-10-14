@@ -19,7 +19,10 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import { computeClaudeUsageCost } from '../utils/pricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscripts,
+} from '../../shared/claudeSessionUsage';
 import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
@@ -104,7 +107,8 @@ function parseSessionContent(
 	content: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	subagentContents: readonly string[] = []
 ): AgentSessionInfo | null {
 	try {
 		const lines = content.split('\n').filter((l) => l.trim());
@@ -161,7 +165,7 @@ function parseSessionContent(
 			cacheCreationTokens: totalCacheCreationTokens,
 			costUsd,
 			byModel,
-		} = computeClaudeUsageCost(content);
+		} = computeClaudeUsageWithSubagents(content, subagentContents);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -229,7 +233,13 @@ async function parseSessionFile(
 		}
 
 		const content = await fs.readFile(filePath, 'utf-8');
-		return parseSessionContent(content, sessionId, projectPath, stats);
+		return parseSessionContent(
+			content,
+			sessionId,
+			projectPath,
+			stats,
+			await readClaudeSubagentTranscripts(filePath)
+		);
 	} catch (error) {
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
@@ -319,8 +329,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the Claude projects directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteProjectsDir(): string {
-		return '~/.claude/projects';
+	private getRemoteProjectsDir(configDir?: string): string {
+		return path.posix.join(configDir ?? '~/.claude', 'projects');
 	}
 
 	/**
@@ -336,9 +346,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the encoded project directory path (remote)
 	 * Uses POSIX-style paths for remote Linux hosts
 	 */
-	private getRemoteEncodedProjectDir(projectPath: string): string {
+	private getRemoteEncodedProjectDir(projectPath: string, configDir?: string): string {
 		const encodedPath = encodeClaudeProjectPath(projectPath);
-		return `${this.getRemoteProjectsDir()}/${encodedPath}`;
+		return `${this.getRemoteProjectsDir(configDir)}/${encodedPath}`;
 	}
 
 	/**
@@ -504,7 +514,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, configDir);
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
@@ -542,9 +552,10 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		configDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
 		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
 		if (!dirResult.success) {

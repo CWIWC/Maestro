@@ -155,9 +155,12 @@ Rules for media:
   starting playback is not a quiet action, so do it when the user asked for it,
   not to inspect a file. To check a media file's duration or codec without
   making noise, use `ffprobe` in your own shell.
-- **Only local files reach the player.** A file on an SSH remote has no
-  stream to play, so it falls back to the ordinary binary-file path. Say so
-  rather than reporting that it is playing.
+- **Local files and http(s) URLs reach the player; SSH-remote files do not.**
+  A file on an SSH remote has no stream to play, so it falls back to the
+  ordinary binary-file path. Say so rather than reporting that it is playing.
+- **`open-file <https-url>` streams media from the web.** Progressive MP4
+  (H.264/AAC) and plain audio files (mp3, m4a, ...) play directly. HLS
+  (`.m3u8`), DASH, RTSP, and RTMP do NOT - say so instead of trying.
 - **Each call takes over the player, so open ONE file.** There is only ever one
   player, and a second `open-file` starts playing that file instead. The first
   is not lost, it stays in the play queue and the previous button goes back to

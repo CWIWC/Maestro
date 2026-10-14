@@ -12,7 +12,8 @@ import {
 	buildNameMap,
 	computeAxisLabelIndices,
 	PHONE_AXIS_LABELS,
-	barChartLabelWidth,
+	BAR_CHART_GRID_STYLE,
+	BAR_CHART_ROW_STYLE,
 	DONUT_CHART,
 	describeDonutArc,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
@@ -360,19 +361,16 @@ describe('describeDonutArc', () => {
 	});
 });
 
-describe('barChartLabelWidth', () => {
-	it('keeps the 112px floor for short labels', () => {
-		expect(barChartLabelWidth(['Codex'])).toBe(112);
+describe('bar chart grid', () => {
+	it('sizes the name column to its widest label, capped so the bars keep room', () => {
+		expect(BAR_CHART_GRID_STYLE.gridTemplateColumns).toBe('fit-content(50%) minmax(0, 1fr) auto');
 	});
 
-	it('grows to fit the longest label, swatch included', () => {
-		const bare = barChartLabelWidth(['Claude Code (Worktree)']);
-		const withSwatch = barChartLabelWidth(['Claude Code (Worktree)'], { withSwatch: true });
-		expect(bare).toBeGreaterThan(112);
-		expect(withSwatch).toBe(bare + 18);
-	});
-
-	it('caps one pathological name so the bars keep their room', () => {
-		expect(barChartLabelWidth(['x'.repeat(500)], { withSwatch: true })).toBe(320);
+	it('rows join the parent columns through subgrid', () => {
+		expect(BAR_CHART_ROW_STYLE).toMatchObject({
+			display: 'grid',
+			gridTemplateColumns: 'subgrid',
+			gridColumn: '1 / -1',
+		});
 	});
 });

@@ -16,6 +16,7 @@
 
 import type { CueAction, CueScheduleDay } from './contracts';
 import { CUE_SCHEDULE_DAYS } from './contracts';
+import type { CueTurnSettings, CueTurnSettingsPatch } from './turn-settings';
 
 /** Cue events that make a subscription a scheduled task. */
 export const SCHEDULED_TASK_EVENTS = ['time.once', 'time.scheduled', 'time.heartbeat'] as const;
@@ -36,8 +37,9 @@ export const DEFAULT_GRACE_MINUTES = 360;
 /** Upper bound the Cue validator enforces on both grace and interval minutes. */
 export const MAX_SCHEDULE_MINUTES = 10080;
 
-/** One scheduled task, resolved against the agent that owns it. */
-export interface ScheduledTask {
+/** One scheduled task, resolved against the agent that owns it. `tier` /
+ *  `model` / `effort` are the prompt run's model choice, when it set one. */
+export interface ScheduledTask extends CueTurnSettings {
 	/** Subscription name - unique within one agent's cue.yaml. */
 	name: string;
 	kind: ScheduledTaskKind;
@@ -73,8 +75,9 @@ export interface ScheduledTask {
 	nextFireAtMs: number | null;
 }
 
-/** Fields accepted when creating a task. */
-export interface ScheduledTaskCreateInput {
+/** Fields accepted when creating a task. `tier` (or an exact `model`) and
+ *  `effort` apply to the prompt run only; a notify-only task rejects them. */
+export interface ScheduledTaskCreateInput extends CueTurnSettings {
 	/** Agent that runs the task. Resolved to a projectRoot by the caller. */
 	agentId: string;
 	kind: ScheduledTaskKind;
@@ -112,6 +115,9 @@ export interface ScheduledTaskUpdateInput {
 	label?: string;
 	enabled?: boolean;
 	notify?: { message: string; sticky?: boolean };
+	/** Change the prompt run's model choice. The one field here that CAN be
+	 *  cleared: a `null` axis falls back to the agent's own model or effort. */
+	turnSettings?: CueTurnSettingsPatch;
 }
 
 /** Map a scheduled-task event to its recurrence kind. */

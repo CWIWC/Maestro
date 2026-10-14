@@ -18,7 +18,11 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
-import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
+import {
+	calculateContextDisplay,
+	calculateDisplayInputTokens,
+	resolveGaugeTokenStats,
+} from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
@@ -116,12 +120,7 @@ function getContextPercentage(tab: AITab, agentId?: ToolType): number | null {
 	const { contextWindow } = tab.usageStats;
 	if (!contextWindow || contextWindow === 0) return null;
 	const result = calculateContextDisplay(
-		{
-			inputTokens: tab.usageStats.inputTokens,
-			outputTokens: tab.usageStats.outputTokens,
-			cacheCreationInputTokens: tab.usageStats.cacheCreationInputTokens ?? 0,
-			cacheReadInputTokens: tab.usageStats.cacheReadInputTokens ?? 0,
-		},
+		resolveGaugeTokenStats(tab.usageStats, agentId),
 		contextWindow,
 		agentId
 	);

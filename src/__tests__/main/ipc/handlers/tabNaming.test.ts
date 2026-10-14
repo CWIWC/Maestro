@@ -1563,6 +1563,163 @@ describe('Tab Naming IPC Handlers', () => {
 		});
 	});
 
+	describe('effort refused by the provider', () => {
+		// Verbatim from a Codex-over-SSH naming run. The turn never ran: the API
+		// answered the cheap effort with a 400, the process exited 1 with no
+		// output, and the tab kept its session-id label with nothing to say why.
+		const REFUSAL = {
+			type: 'unknown',
+			agentId: 'claude-code',
+			recoverable: true,
+			timestamp: 0,
+			message:
+				'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+		};
+
+		type Callbacks = {
+			data?: (sessionId: string, data: string) => void;
+			exit?: (sessionId: string, code?: number) => void;
+			'agent-error'?: (sessionId: string, error: unknown) => void;
+		};
+
+		// Each attempt registers its own listeners; keep the latest set.
+		function captureListeners(): Callbacks {
+			const callbacks: Callbacks = {};
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					(callbacks as Record<string, unknown>)[event] = callback;
+				}
+			);
+			return callbacks;
+		}
+
+		it('runs the naming turn once more with the effort left to the agent', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			expect((applyAgentConfigOverrides as Mock).mock.calls[0][2]).toMatchObject({
+				sessionCustomEffort: 'low',
+			});
+
+			// The refusal arrives as an agent error, then the process exits 1.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retryOverrides = (applyAgentConfigOverrides as Mock).mock.calls[1][2];
+			expect(retryOverrides.sessionCustomEffort).toBeUndefined();
+			// Only the effort is dropped; the cheap MODEL is still wanted.
+			expect(retryOverrides.sessionCustomModel).toBe('haiku');
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+
+			expect(await resultPromise).toBe('Slack Formatting Fix');
+		});
+
+		it('detaches the first attempt listeners before retrying', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstErrorListener = callbacks['agent-error'];
+
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+
+			expect(mockProcessManager.off).toHaveBeenCalledWith('agent-error', firstErrorListener);
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+			await resultPromise;
+		});
+
+		it('gives up after one retry rather than looping', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+
+			// The agent's OWN configured effort is refused too. That is the
+			// user's setting to change; a third spawn would just repeat it.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', {
+				...REFUSAL,
+				message: 'Not logged in',
+			});
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('ignores a refusal that belongs to another process', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('some-other-session', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('spawn failures (MAESTRO-X4)', () => {
 		// child_process.spawn throws synchronously for an unusable binary. The
 		// call sits in the naming Promise's executor, and the enclosing

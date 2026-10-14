@@ -6,6 +6,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import type { ManagedProcess, AgentError } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
@@ -129,7 +130,9 @@ export class ExitHandler {
 		if (managedProcess.interrupted) {
 			managedProcess.provisionalError = undefined;
 		}
-		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+		settleProvisionalAgentError(this.emitter, this.bufferManager, sessionId, managedProcess, {
+			flushStreamedText: isStreamJsonMode,
+		});
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
@@ -192,12 +195,18 @@ export class ExitHandler {
 			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
 				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
 				if (agentError) {
-					managedProcess.errorEmitted = true;
 					agentError.sessionId = sessionId;
 					if (managedProcess.sshRemoteId) {
 						agentError.sshRemoteId = managedProcess.sshRemoteId;
 					}
-					this.emitter.emit('agent-error', sessionId, agentError);
+					emitAgentErrorAfterOutput(
+						this.emitter,
+						this.bufferManager,
+						sessionId,
+						managedProcess,
+						agentError,
+						{ flushStreamedText: true }
+					);
 				}
 			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
@@ -231,7 +240,6 @@ export class ExitHandler {
 				managedProcess.stdoutBuffer || managedProcess.streamedText || ''
 			);
 			if (agentError) {
-				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
 				if (managedProcess.sshRemoteId) {
 					agentError.sshRemoteId = managedProcess.sshRemoteId;
@@ -242,7 +250,13 @@ export class ExitHandler {
 					errorType: agentError.type,
 					errorMessage: agentError.message,
 				});
-				this.emitter.emit('agent-error', sessionId, agentError);
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					agentError
+				);
 			}
 		}
 
@@ -270,7 +284,6 @@ export class ExitHandler {
 
 			const sshError = matchSshErrorPattern(stderrToCheck);
 			if (sshError) {
-				managedProcess.errorEmitted = true;
 				const agentError: AgentError = {
 					type: sshError.type,
 					message: sshError.message,
@@ -292,7 +305,13 @@ export class ExitHandler {
 					errorMessage: sshError.message,
 					stderrPreview: stderrToCheck.substring(0, 500),
 				});
-				this.emitter.emit('agent-error', sessionId, agentError);
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					agentError
+				);
 			} else if (code !== 0) {
 				// Log SSH failures even if no pattern matched, to help debug
 				logger.warn(
@@ -332,7 +351,6 @@ export class ExitHandler {
 			!sessionId.includes('-synopsis-') &&
 			!sessionId.startsWith('tab-naming-')
 		) {
-			managedProcess.errorEmitted = true;
 			const agentError: AgentError = {
 				type: 'agent_crashed',
 				message:
@@ -349,7 +367,13 @@ export class ExitHandler {
 				'ProcessManager',
 				{ sessionId, exitCode: code }
 			);
-			this.emitter.emit('agent-error', sessionId, agentError);
+			emitAgentErrorAfterOutput(
+				this.emitter,
+				this.bufferManager,
+				sessionId,
+				managedProcess,
+				agentError
+			);
 		}
 
 		// Clean up temp image files if any

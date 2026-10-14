@@ -527,11 +527,15 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Handle error messages
+		// Handle error messages. Legacy shapes carry the text in `error`; the
+		// bare exec-JSON `error` event carries it in `message` (the same fallback
+		// detectErrorFromParsed makes). Without it the event read "Unknown error",
+		// and the CLI, which keeps the FIRST error text of a turn, reported that
+		// instead of the API's own message on the `turn.failed` line after it.
 		if (msg.type === 'error' || msg.error) {
 			return {
 				type: 'error',
-				text: extractErrorText(msg.error),
+				text: extractErrorText(msg.error ?? msg.message),
 				raw: msg,
 			};
 		}

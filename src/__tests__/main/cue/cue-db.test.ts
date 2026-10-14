@@ -66,8 +66,8 @@ const mockDb = {
 		}
 		// Same idea for cue_event_queue - Phase 01 added chain_root_id /
 		// parent_event_id so persisted queue rows survive restart with
-		// lineage intact. Returning the full column set keeps the additive
-		// migration a no-op under the mock.
+		// lineage intact. This is the set from BEFORE `turn_settings_json`,
+		// so the additive migration must backfill that one column.
 		if (query.startsWith('table_info(cue_event_queue)')) {
 			return [
 				{ name: 'id' },
@@ -237,6 +237,30 @@ describe('cue-db additive column migration', () => {
 		expect(createSql).toBeDefined();
 		expect(createSql).toContain('output_excerpt TEXT');
 		expect(createSql).toContain('full_output TEXT');
+	});
+
+	it('declares turn_settings_json on the persisted queue table', () => {
+		initCueDb(undefined, dbPath);
+
+		const createSql = prepareCalls.find((sql) =>
+			sql.includes('CREATE TABLE IF NOT EXISTS cue_event_queue')
+		);
+		expect(createSql).toContain('turn_settings_json TEXT');
+	});
+
+	it('ALTERs a queue table that predates turn_settings_json', () => {
+		initCueDb(undefined, dbPath);
+
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN turn_settings_json TEXT'
+			)
+		).toBe(true);
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN chain_root_id TEXT'
+			)
+		).toBe(false);
 	});
 
 	it('ALTERs an existing database that predates the output columns', () => {

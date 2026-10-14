@@ -1,5 +1,9 @@
 import { ipcRenderer } from 'electron';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
+import type {
+	SteeringCommandRequest,
+	SteeringCommandResult,
+} from '../../../shared/autoRunSteeringCommands';
 
 export function createAutoRunControlRemoteApi() {
 	return {
@@ -137,6 +141,29 @@ export function createAutoRunControlRemoteApi() {
 
 		sendRemoteAbortAutoRunErrorResponse: (responseChannel: string, success: boolean): void => {
 			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to a remote Auto Run steering verb (`maestro-cli steer-auto-run`).
+		 *
+		 * A round trip rather than a fire-and-forget send: every verb answers the
+		 * caller with the note it parked or took back, or with the run's notes
+		 * and replies, so the response channel is part of the contract.
+		 */
+		onRemoteAutoRunSteeringCommand: (
+			callback: (request: SteeringCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: SteeringCommandRequest, responseChannel: string) =>
+				callback(request, responseChannel);
+			ipcRenderer.on('remote:autoRunSteeringCommand', handler);
+			return () => ipcRenderer.removeListener('remote:autoRunSteeringCommand', handler);
+		},
+
+		sendRemoteAutoRunSteeringCommandResponse: (
+			responseChannel: string,
+			result: SteeringCommandResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

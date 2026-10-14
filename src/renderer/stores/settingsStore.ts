@@ -53,6 +53,7 @@ import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes'
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { MAX_ENTRIES_PER_SESSION } from '../../shared/history';
 import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared/usagePeaks';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
@@ -369,6 +370,7 @@ export interface SettingsStoreState
 	forcedParallelAlways: boolean;
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
+	crossAgentHandoffsWritable: boolean;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -498,6 +500,7 @@ export interface SettingsStoreActions
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setForcedParallelAlways: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -737,6 +740,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		forcedParallelAcknowledged: false,
 		forcedParallelAlways: false,
 		crossAgentMentionsWritable: false,
+		crossAgentHandoffsWritable: true,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -755,7 +759,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: MAX_ENTRIES_PER_SESSION,
 		maxOutputLines: Infinity,
 		checkForUpdatesOnStartup: true,
 		autoResumeOnLimit: true,
@@ -916,6 +920,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCrossAgentMentionsWritable: (value) => {
 			set({ crossAgentMentionsWritable: value });
 			window.maestro.settings.set('crossAgentMentionsWritable', value);
+		},
+
+		setCrossAgentHandoffsWritable: (value) => {
+			set({ crossAgentHandoffsWritable: value });
+			window.maestro.settings.set('crossAgentHandoffsWritable', value);
 		},
 
 		setDefaultSaveToHistory: (value) => {
@@ -1993,6 +2002,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['crossAgentMentionsWritable'] !== undefined)
 			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
+		if (allSettings['crossAgentHandoffsWritable'] !== undefined)
+			patch.crossAgentHandoffsWritable = allSettings['crossAgentHandoffsWritable'] as boolean;
 
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
@@ -2838,6 +2849,7 @@ export function getSettingsActions() {
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
+		setShowLeftPanelCollapsedInitials: state.setShowLeftPanelCollapsedInitials,
 		showStarredSessionsSection: state.showStarredSessionsSection,
 		setShowStarredSessionsSection: state.setShowStarredSessionsSection,
 		setLeftPanelCollapsedPillsPerRow: state.setLeftPanelCollapsedPillsPerRow,

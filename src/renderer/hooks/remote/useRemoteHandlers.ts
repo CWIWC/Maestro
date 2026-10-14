@@ -29,18 +29,18 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
 import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
+	previewMentionDispatch,
+	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
-import {
-	resolveConsultTargets,
-	withConsultPendingNote,
-} from '../../services/crossAgentConsultHold';
 import { noteDirectDispatch } from '../../stores/retryStore';
+import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -390,7 +390,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					reportDelivery(false, 'no-target-tab-for-mention');
 					return;
 				}
-				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+				// The bubble below lands in this tab, so name it from the message just as
+				// the composer does for a leading mention (it names before planning).
+				requestTabAutoNameForMessage(session, writeTabId, command, 'remote');
 				const mentionOnlyEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -566,6 +569,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 				const remoteImages = images && images.length > 0 ? images : undefined;
 
+				// A dispatch that opens the tab's first turn starts a new provider
+				// session, so it carries the New Session Message like a typed message
+				// does. Agent-only: the user bubble below keeps the plain `promptToSend`.
+				const agentPrompt = prependNewSessionMessageOnFirstTurn(
+					promptToSend,
+					session.newSessionMessage,
+					tabAgentSessionId
+				);
+
 				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
 					targetSessionId,
@@ -578,6 +590,19 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prompt: promptToSend.substring(0, 100),
 					imageCount: remoteImages?.length ?? 0,
 				});
+
+				// Name the tab from what was dispatched, exactly as the composer does for a
+				// typed message. `maestro-cli dispatch`, `send --live`, an idle `dispatch
+				// --new-tab`, and the web/mobile composer all land here without passing
+				// through the desktop composer, so this is the only chance such a tab
+				// gets to be named. A matched slash command is skipped, as it is in the
+				// composer (which returns before naming) and in the queue drain (which
+				// skips `command` items): its text is a command name, not a request.
+				// Runs after the awaits above, and the helper reads the live tab, so a
+				// tab closed or named in the meantime is left alone.
+				if (targetTab && !commandMetadata) {
+					requestTabAutoNameForMessage(session, targetTab.id, command, 'remote');
+				}
 
 				// Add user message to target tab's logs and set state to busy
 				const userLogEntry: LogEntry = {
@@ -684,17 +709,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						// A trailing mention is answered by the consulted agent in parallel
-						// (dispatched below); tell this turn so it waits for the reply
-						// rather than finishing alone. Agent-only: the user bubble above
-						// keeps the plain `promptToSend`.
+						// A trailing mention is answered by the consulted agent in parallel,
+						// or handed this turn's answer when it ends (dispatched below); tell
+						// this turn which, so it waits for the reply or writes an answer
+						// that stands alone. Agent-only: the user bubble above keeps the
+						// plain `promptToSend`.
 						prompt:
 							mentionPlan && writeTabId
-								? withConsultPendingNote(
-										promptToSend,
-										resolveConsultTargets(mentionPlan.targetSessionIds)
-									)
-								: promptToSend,
+								? withMentionTurnNotes(agentPrompt, previewMentionDispatch(mentionPlan))
+								: agentPrompt,
 						images: remoteImages,
 						appendSystemPrompt,
 						agentSessionId: tabAgentSessionId ?? undefined,
@@ -716,9 +739,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// A no-op if the grace timer already acked.
 				reportDelivery(true);
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
-				// Trailing mention: this agent answers AND the mentioned agent is consulted.
+				// Trailing mention: this agent answers AND the mentioned agent is
+				// consulted alongside it, or handed the answer when it ends.
 				if (mentionPlan && writeTabId) {
-					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId);
+					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
 				}
 			} catch (error: unknown) {
 				// A remote command that lands while the agent is mid-turn is refused

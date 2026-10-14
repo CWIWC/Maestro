@@ -27,7 +27,11 @@ import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
-import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
+import {
+	useSettingsStore,
+	selectGroupsPlusEnabled,
+	selectIsLeaderboardRegistered,
+} from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
@@ -75,7 +79,11 @@ import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
-import { buildWindowMoveTargets } from '../../utils/windowTargets';
+import {
+	buildGroupWindowMoveTargets,
+	buildWindowMoveTargets,
+	collectGroupAgentIds,
+} from '../../utils/windowTargets';
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
@@ -217,6 +225,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
+	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const setAudioFeedbackEnabled = useSettingsStore((s) => s.setAudioFeedbackEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
@@ -376,8 +385,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}
 	}, [setProfilingActive, setProfilingBufferPercent]);
 	// Stopping is slow (flush + zip compression can take tens of seconds), so we
-	// hand off to the ProfilingCaptureModal, which owns the whole stop-and-bundle
-	// flow, shows live progress, and clears the wand indicator when it finishes.
+	// hand off to the profilingCapture service, which owns the stop-and-bundle
+	// flow and clears the wand indicator when it finishes. The modal only shows it.
 	const handleStopProfiling = useCallback(() => {
 		openModal('profilingCapture');
 	}, [openModal]);
@@ -390,6 +399,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	// The group a "Move Group to ..." command carries: a worktree child is filed
+	// under its parent's group, the same unit the window move relocates.
+	const activeWindowGroupId = activeSession?.parentSessionId
+		? sessions.find((s) => s.id === activeSession.parentSessionId)?.groupId
+		: activeSession?.groupId;
+	const activeWindowGroup = activeWindowGroupId
+		? groups.find((g) => g.id === activeWindowGroupId)
+		: undefined;
 	// The palette is the third surface for the git action set, after the header
 	// branch pill and the Left Bar right-click menu.
 	const gitActions = useGitAgentActions(activeSession);
@@ -626,6 +643,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					: [],
 			moveToNewWindow: (id) => windowCtx?.moveSessionToNewWindow(id),
 			moveToWindow: (id, targetWindowId) => windowCtx?.moveSessionToWindow(id, targetWindowId),
+			activeGroup: activeWindowGroup,
+			groupWindowTargets:
+				windowCtx && activeWindowGroup
+					? buildGroupWindowMoveTargets(
+							windowCtx.windows,
+							collectGroupAgentIds(sessions, groups, activeWindowGroup.id, groupsPlusEnabled)
+						)
+					: [],
+			moveGroupToNewWindow: (groupId) => windowCtx?.moveGroupToNewWindow(groupId),
+			moveGroupToWindow: (groupId, targetWindowId) =>
+				windowCtx?.moveGroupToWindow(groupId, targetWindowId),
 			setQuickActionOpen,
 			canRenameCurrentWindow: isSecondaryWindow,
 			beginRenameCurrentWindow,

@@ -6,7 +6,7 @@ import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { resolveDirentType } from '../../utils/dirent-utils';
-import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
+import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreDotfilesUnder } from '../../utils/watcher-ignore';
 import { SshRemoteConfig, PlaybookStatus } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { createSafeSend } from '../../utils/safe-send';
@@ -1026,7 +1026,7 @@ export function registerAutorunHandlers(
 				// Start watching the folder recursively using chokidar (cross-platform)
 				const watcher = chokidar.watch(folderPath, {
 					ignored: [
-						/(^|[/\\])\../, // Ignore dotfiles
+						ignoreDotfilesUnder(folderPath), // Ignore dotfiles below the root, not above it
 						WINDOWS_LOCKED_SYSTEM_FILES,
 					],
 					persistent: true,

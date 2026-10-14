@@ -14,6 +14,13 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
+import {
+	claudeTurnCost,
+	costStateFromResult,
+	rememberClaudeSessionCost,
+	rememberedClaudeSessionCost,
+	type ClaudeCostState,
+} from '../../shared/claudeCostTracker';
 import { getErrorPatterns, isClaudeLimitNotice, matchErrorPattern } from './error-patterns';
 
 /**
@@ -76,9 +83,11 @@ interface ClaudeRawMessage {
 		/**
 		 * Per-call token usage, present on every `assistant` message. This is the
 		 * usage of ONE internal API call, unlike the result message's `modelUsage`
-		 * which is the CLI's own sum across every call of the turn.
+		 * which is the CLI's own sum across every call of the session (see
+		 * claudeCostTracker.ts).
 		 */
 		usage?: ClaudeCallUsage;
+		model?: string;
 	};
 	slash_commands?: string[];
 	modelUsage?: Record<string, ModelStats>;
@@ -188,6 +197,25 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * repeats whole messages.
 	 */
 	private pendingReply: { id: string | undefined; texts: string[] } | null = null;
+
+	/**
+	 * The session's cost tracker as of the start of this turn, which a result's
+	 * running totals are reduced by (see claudeCostTracker.ts). `null` is a
+	 * known zero (a fresh session); `undefined` is unknown (a resumed session
+	 * whose transcript could not be read).
+	 */
+	private costBaseline: ClaudeCostState | null | undefined = null;
+
+	/**
+	 * Set once the baseline is settled: by the spawn, or by the first result.
+	 * Settled once per process, so a result line parsed twice (the held-error
+	 * path re-reads it) yields the same turn cost both times instead of being
+	 * subtracted from its own remembered total.
+	 */
+	private baselineSettled = false;
+
+	/** The model the main thread's last call ran on; prices an estimate. */
+	private lastMainModel: string | undefined;
 
 	/**
 	 * Replies the model finished before a Stop hook blocked the turn. The
@@ -609,6 +637,11 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return;
 		}
 
+		const model = msg.message?.model;
+		if (typeof model === 'string' && model && model !== '<synthetic>') {
+			this.lastMainModel = model;
+		}
+
 		const usage = msg.message?.usage;
 		if (!usage) {
 			return;
@@ -624,6 +657,36 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Tell the parser which session this process resumes and what that
+	 * session's cost tracker held when the turn spawned. `baseline` follows
+	 * readLastClaudeCostState: `null` when the transcript holds none, `undefined`
+	 * when it could not be read, in which case a total this app saw the session
+	 * report earlier is used if there is one.
+	 */
+	primeResumedSession(resumeSessionId: string, baseline: ClaudeCostState | null | undefined): void {
+		this.baselineSettled = true;
+		this.costBaseline =
+			baseline !== undefined ? baseline : rememberedClaudeSessionCost(resumeSessionId);
+	}
+
+	/** This turn's share of a result's session totals, remembering them for the next turn. */
+	private turnCostOf(msg: ClaudeRawMessage) {
+		// A spawn that did not say it resumes (an SSH spawn, whose transcript is
+		// on the remote host) still resumes a session this app may have seen
+		// report before, and that report is the baseline.
+		if (!this.baselineSettled) {
+			this.baselineSettled = true;
+			if (msg.session_id) {
+				this.costBaseline = rememberedClaudeSessionCost(msg.session_id) ?? this.costBaseline;
+			}
+		}
+		const turn = claudeTurnCost(msg, this.costBaseline, this.lastMainModel);
+		const reported = costStateFromResult(msg);
+		if (msg.session_id && reported) rememberClaudeSessionCost(msg.session_id, reported);
+		return turn;
+	}
+
+	/**
 	 * Extract usage statistics from raw Claude message
 	 */
 	private extractUsageFromRaw(msg: ClaudeRawMessage): ParsedEvent['usage'] | null {
@@ -631,11 +694,15 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		// A result's modelUsage and total_cost_usd are the SESSION's running
+		// totals; reduce them to this turn's before anything records them.
+		const turn = msg.type === 'result' ? this.turnCostOf(msg) : null;
+
 		// Use the aggregateModelUsage helper from process-manager
 		const aggregated = aggregateModelUsage(
-			msg.modelUsage,
+			turn ? (turn.modelUsage as Record<string, ModelStats> | undefined) : msg.modelUsage,
 			msg.usage || {},
-			msg.total_cost_usd || 0
+			turn ? turn.totalCostUsd : msg.total_cost_usd || 0
 		);
 
 		return {
@@ -794,7 +861,25 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, errorText);
+		// An in-turn API error notice puts only a bare category tag in `error`
+		// (`invalid_request`, `server_error`), and a tag matches no pattern. What
+		// actually failed is the notice's own text, so classify from that when the
+		// tag says nothing. Captured live: a full context window arrived as
+		//
+		//   { type: 'assistant', error: 'invalid_request', is_api_error_message: true,
+		//     message: { model: '<synthetic>', content: [{ type: 'text',
+		//       text: 'Prompt is too long' }] } }
+		//
+		// and surfaced as an `unknown` error reading "invalid_request". The result
+		// that follows does classify, but the held notice is settled first and wins.
+		const match =
+			matchErrorPattern(patterns, errorText) ??
+			(this.isProvisionalErrorNotice(parsed)
+				? matchErrorPattern(
+						patterns,
+						this.extractTextFromMessage(obj as unknown as ClaudeRawMessage)
+					)
+				: null);
 
 		if (match) {
 			return {

@@ -92,8 +92,12 @@ export const HISTORY_VERSION = 1;
  * Default maximum number of history entries stored per session.
  * Used as fallback when maxLogBuffer setting is not available.
  * The actual limit is controlled by the maxLogBuffer user setting.
+ *
+ * This is also the `maxLogBuffer` default itself: the renderer store and the
+ * settings metadata both read it, so the value a fresh install shows in
+ * Settings is the value every writer falls back to.
  */
-export const MAX_ENTRIES_PER_SESSION = 5000;
+export const MAX_ENTRIES_PER_SESSION = 10000;
 
 /**
  * Session ID used for history entries that don't have an associated session.
@@ -107,9 +111,9 @@ export const ORPHANED_SESSION_ID = '_orphaned';
  * Every writer (main process, Cue, CLI) MUST run the setting through this so a
  * single writer can't quietly trim a file the others are allowed to grow: the
  * trim is destructive, so the smallest cap in play wins on disk. A busy Auto
- * Run agent hit exactly this - its Cue writes used the 5,000 fallback and
- * truncated a history the user had raised to 25,000, leaving only the last
- * few days visible.
+ * Run agent hit exactly this - its Cue writes used the built-in fallback (then
+ * 5,000) and truncated a history the user had raised to 25,000, leaving only
+ * the last few days visible.
  *
  * @param value - Raw setting value (may be undefined, a string, or garbage)
  * @returns A positive integer cap, or MAX_ENTRIES_PER_SESSION when unusable

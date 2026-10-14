@@ -6,7 +6,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
-import { computeClaudeUsageCost } from '../../shared/modelPricing';
+import {
+	computeClaudeUsageWithSubagents,
+	readClaudeSubagentTranscriptsSync,
+} from '../../shared/claudeSessionUsage';
 
 // ============================================================================
 // Constants (inlined from main/constants.ts to avoid Electron dependencies)
@@ -133,7 +136,8 @@ function parseSessionContent(
 	content: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	subagentContents: readonly string[]
 ): AgentSessionInfo | null {
 	try {
 		const lines = content.split('\n').filter((l) => l.trim());
@@ -177,7 +181,7 @@ function parseSessionContent(
 			cacheReadTokens: totalCacheReadTokens,
 			cacheCreationTokens: totalCacheCreationTokens,
 			costUsd,
-		} = computeClaudeUsageCost(content);
+		} = computeClaudeUsageWithSubagents(content, subagentContents);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -265,10 +269,13 @@ export function listClaudeSessions(
 			if (stats.size === 0) continue; // Skip empty files
 
 			const content = fs.readFileSync(filePath, 'utf-8');
-			const session = parseSessionContent(content, sessionId, projectPath, {
-				size: stats.size,
-				mtimeMs: stats.mtimeMs,
-			});
+			const session = parseSessionContent(
+				content,
+				sessionId,
+				projectPath,
+				{ size: stats.size, mtimeMs: stats.mtimeMs },
+				readClaudeSubagentTranscriptsSync(filePath)
+			);
 
 			if (session) {
 				// Attach origin info

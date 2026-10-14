@@ -74,6 +74,7 @@ import {
 	handleFeedbackCheckAuth,
 	handleFeedbackGhLoginCommand,
 	handleFeedbackAccounts,
+	handleFeedbackDiagnose,
 	handleFeedbackSearch,
 	handleFeedbackSubmit,
 	handleFeedbackSubscribe,
@@ -101,6 +102,8 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -303,6 +306,14 @@ export class WebSocketMessageHandler {
 
 			case 'snooze_command':
 				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
+			case 'auto_run_steering_command':
+				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
+			case 'window_command':
+				handleWindowCommand(this.ctx, client, message);
 				break;
 
 			case 'reorder_tab':
@@ -675,6 +686,10 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_accounts':
 				void handleFeedbackAccounts(this.ctx, client, message);
+				break;
+
+			case 'feedback_diagnose':
+				void handleFeedbackDiagnose(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

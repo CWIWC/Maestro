@@ -13,6 +13,8 @@ interface LeftSidePanelSectionProps {
 	setShowStarredSessionsSection: (enabled: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (enabled: boolean) => void;
+	showLeftPanelCollapsedInitials: boolean;
+	setShowLeftPanelCollapsedInitials: (enabled: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;
@@ -44,6 +46,8 @@ export function LeftSidePanelSection({
 	setShowStarredSessionsSection,
 	showLeftPanelGroupMemberCount,
 	setShowLeftPanelGroupMemberCount,
+	showLeftPanelCollapsedInitials,
+	setShowLeftPanelCollapsedInitials,
 	leftPanelCollapsedPillsPerRow,
 	setLeftPanelCollapsedPillsPerRow,
 	showLeftPanelLocationPills,
@@ -93,6 +97,24 @@ export function LeftSidePanelSection({
 					ariaLabel="Show group member count in left side bar"
 					borderTop
 				/>
+				<div data-setting-id="display-left-panel-collapsed-initials">
+					<ToggleSettingRow
+						theme={theme}
+						title="Show agent initials when collapsed"
+						description={
+							<>
+								When the left side bar is collapsed, label each agent with two letters from its name
+								(e.g. <MonoExample>MR</MonoExample> for Maestro RC), tinted with its status color.
+								Letters are picked so no two agents share a label. Turn off to show a plain status
+								dot.
+							</>
+						}
+						checked={showLeftPanelCollapsedInitials}
+						onChange={setShowLeftPanelCollapsedInitials}
+						ariaLabel="Show agent initials in collapsed left side bar"
+						borderTop
+					/>
+				</div>
 
 				<div className="pt-3 border-t" style={{ borderColor: theme.colors.border }}>
 					<p className="text-sm" style={{ color: theme.colors.textMain }}>

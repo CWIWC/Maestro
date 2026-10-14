@@ -670,6 +670,30 @@ Notes on behavior:
 | `-f, --force` | Delete even if the group still has agents (ungroups them) | -       |
 | `--json`      | Machine-readable JSON output                              | -       |
 
+### Moving Agents and Groups Between Windows (`window`)
+
+The CLI half of the Left Bar's **Move to Window** menus. `move-agent` carries one agent with its worktrees; `move-group` carries every agent in a group (and its subgroups when Groups+ nesting is on), gathering a group that is split across windows into one. The primary window answers through the same code path as a click, so the same rule applies: a move that would leave the main window with no agents is refused.
+
+```bash
+# See which windows exist and what each holds
+maestro-cli window list
+
+# Pull a whole group out into a new window
+maestro-cli window move-group <group-id> --to new
+
+# Bring an agent back to the main window, or into window 2 / a named window
+maestro-cli window move-agent <agent-id> --to main
+maestro-cli window move-agent <agent-id> --to 2
+maestro-cli window move-agent <agent-id> --to "Research"
+```
+
+`--to` takes `new`, `main`, a window number (as shown by `window list` and the Left Bar badge), a window id, or a custom window name. Agent and group IDs accept the usual partial-ID resolution. Moving onto the window that already holds everything succeeds and moves nothing.
+
+| Flag            | Description                                            | Default |
+| --------------- | ------------------------------------------------------ | ------- |
+| `--to <window>` | Destination (required for `move-agent` / `move-group`) | -       |
+| `--json`        | Machine-readable JSON output                           | -       |
+
 ### Creating Worktree Agents
 
 Branch a new agent off an existing parent agent into its own git worktree, without an Auto Run playbook. This mirrors the desktop "create worktree" flow: the parent agent must already exist in the running app, the desktop creates the worktree on disk and a child session linked to the parent, then hands back the new agent's ID.
@@ -1190,14 +1214,15 @@ maestro-cli settings agent reset codex model
 
 **Common agent config keys:**
 
-| Key               | Type   | Description                                      |
-| ----------------- | ------ | ------------------------------------------------ |
-| `customPath`      | string | Custom path to the agent CLI binary              |
-| `customArgs`      | string | Additional CLI arguments                         |
-| `customEnvVars`   | object | Extra environment variables                      |
-| `model`           | string | Model override (e.g., `gpt-5.3-codex`, `o3`)     |
-| `contextWindow`   | number | Context window size in tokens                    |
-| `reasoningEffort` | string | Reasoning effort level (`low`, `medium`, `high`) |
+| Key                | Type   | Description                                                                                                       |
+| ------------------ | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `customPath`       | string | Custom path to the agent CLI binary                                                                               |
+| `customArgs`       | string | Additional CLI arguments                                                                                          |
+| `customEnvVars`    | object | Extra environment variables                                                                                       |
+| `model`            | string | Model override (e.g., `gpt-5.3-codex`, `o3`)                                                                      |
+| `contextWindow`    | number | Context window size in tokens                                                                                     |
+| `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
+| `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.
@@ -1399,6 +1424,12 @@ for f in episodes/*.mp3; do maestro-cli open-file "$f" --queue; done
 ```
 
 `--queue` on a file that is not audio or video is an error.
+
+Pass an `http://` or `https://` URL instead of a path to stream it in the player. This covers progressive MP4 (H.264 video, AAC audio) and plain audio files such as MP3 or M4A. Adaptive and live formats (HLS `.m3u8`, DASH, RTSP, RTMP) are not supported. A URL never becomes a tab and never switches agents; it is filed under `--agent`, or the agent that owns your shell's current directory. `--queue` works the same as for a file:
+
+```bash
+maestro-cli open-file https://example.com/clip.mp4 --queue
+```
 
 #### Open a Browser Tab
 
@@ -1769,6 +1800,12 @@ ends. Omit them to use the agent default. They are honored in worktree mode too,
 without changing the child worktree session's own configured model. See
 [Per-run model override](#per-run-model-override) for the full picture.
 
+Every document must sit inside the agent's Auto Run folder. A saved playbook
+stores each one relative to that folder, so `--save-as` and `--launch` both
+refuse a document outside it and name the file. When a saved playbook names a
+document that no longer exists, `maestro-cli playbook` fails with
+`DOCUMENT_NOT_FOUND` and lists the missing paths.
+
 Worktree mode reuses the desktop app's Auto Run pipeline: the app creates the
 worktree (or reuses an existing one on the same repo), checks out the requested
 branch, dispatches the agent inside the worktree, and - when `--create-pr` is
@@ -1796,6 +1833,24 @@ maestro-cli remove-playbook <agent-id> <playbook-id>
 ```
 
 The filename for `reset-auto-run-tasks` is relative to the agent's Auto Run folder; absolute paths and `..` traversal are rejected.
+
+### Steering a Running Auto Run
+
+A steering note changes a run's direction without stopping it: the note parks until the run dispatches its next task, then opens that task's prompt. These are the CLI half of the **Steer Auto Run** button in the Thought Stream. See [Steering a Run in Flight](autorun-playbooks.md#steering-a-run-in-flight) for what the agent is told to do with a note.
+
+```bash
+# Send a note; it is delivered at the start of the next task
+maestro-cli steer-auto-run send "Use the v3 endpoint for the rest of these tasks" -a <agent-id>
+
+# Read the notes still waiting, and each delivered note with its task's reply
+maestro-cli steer-auto-run list -a <agent-id>
+maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full reply
+
+# Take back a note no task has read yet (accepts a unique id prefix)
+maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+```
+
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
 
 ### Checking Status
 
@@ -1924,6 +1979,9 @@ maestro-cli cue schedule --cancel standup
 | `--pipeline <name>`        | Pipeline to file the task under (default: `Tasks`)                       |
 | `--grace-minutes <n>`      | One-shot only: how late a missed fire may still run (default 360)        |
 | `--keep-on-failure`        | One-shot only: keep the task on disk after a failed run                  |
+| `--tier <level>`           | Model tier for the prompt run: `low`, `medium`, `high`                   |
+| `--model <id>`             | Exact model id for the prompt run (instead of `--tier`)                  |
+| `--effort <level>`         | Effort for the prompt run: `low`, `medium`, `high`                       |
 | `--json`                   | Output as JSON (for scripting)                                           |
 
 Notes:
@@ -1932,6 +1990,42 @@ Notes:
 - A task with both `--prompt` and `--notify` becomes two subscriptions sharing one fire time (`<name>-prompt` and `<name>-notify`).
 - `--agent` is a hard scope on `--cancel`, `--reschedule`, `--pause`, and `--resume`. When one name exists on two agents the command refuses to guess and lists the candidates.
 - One-shot tasks delete themselves from the YAML after they fire. Repeating tasks stay until you cancel them.
+- `--tier`, `--model`, and `--effort` apply to the prompt run and need `--prompt`. To change them on a task that already exists, use `cue model` below.
+
+### Setting a Subscription's Model
+
+`cue model` shows or changes the model one Cue subscription runs on: a model tier or an exact model, plus an effort level. It works on any subscription that runs an agent, including scheduled tasks and pipeline steps, and it is the CLI twin of the **Model** and **Effort** selectors on a Pipeline Graph agent node and in the Scheduled Tasks form. Like `cue schedule`, it edits the agent's `.maestro/cue.yaml` directly, so it works with the desktop app closed.
+
+```bash
+# Show the current choice and what it resolves to for that agent's provider
+maestro-cli cue model nightly-review
+
+# Run a step on the provider's top model at low effort
+maestro-cli cue model nightly-review --tier high --effort low
+
+# Pin an exact model (for providers with no tier mapping, such as Codex)
+maestro-cli cue model triage --model gpt-5.5-codex
+
+# Go back to the agent's own model and effort
+maestro-cli cue model nightly-review --clear-model --clear-effort
+```
+
+| Flag                       | Description                                                      |
+| -------------------------- | ---------------------------------------------------------------- |
+| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider         |
+| `--model <id>`             | Exact model id, passed to the agent as-is                        |
+| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder |
+| `--clear-model`            | Remove the tier or model and use the agent's own model           |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                 |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)        |
+| `--json`                   | Output as JSON (for scripting)                                   |
+
+Notes:
+
+- With no setting flag the command only reads. Its output names the stored choice and the model and effort the run resolves to.
+- `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
+- When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
+- Subscriptions with `action: command` or `action: notify` run no agent, so the command refuses to set a model on them.
 
 ### Triggering a Subscription
 

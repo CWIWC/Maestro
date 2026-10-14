@@ -26,6 +26,8 @@ import {
 	type CueNotifyConfig,
 	type CueSubscription,
 } from '../../../../shared/cue';
+import { cueTurnSettingsOf } from '../../../../shared/cue/turn-settings';
+import type { EffortLevel, ModelTier } from '../../../../shared/modelTiers';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -64,6 +66,9 @@ interface GraphSessionInput {
 		self_destruct_on_failure?: boolean;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];
+		tier?: ModelTier;
+		model?: string;
+		effort?: EffortLevel;
 	}>;
 }
 
@@ -754,6 +759,8 @@ export function subscriptionsToPipelines(
 						if (i === 0 && sub.output_prompt) {
 							(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 						}
+						// A fan-out sub's one model choice belongs to every target.
+						Object.assign(agentNode.data, cueTurnSettingsOf(sub));
 
 						// Store per-edge prompt when fan_out_prompts differ from shared prompt
 						const edgePrompt =
@@ -859,6 +866,7 @@ export function subscriptionsToPipelines(
 					if (sub.output_prompt) {
 						(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 					}
+					Object.assign(agentNode.data, cueTurnSettingsOf(sub));
 
 					// `edge.prompt` is the single source of truth for every
 					// trigger→agent edge. Always emit the subscription's prompt
@@ -1154,6 +1162,7 @@ export function subscriptionsToPipelines(
 				if (sub.output_prompt) {
 					(targetNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 				}
+				Object.assign(targetNode.data, cueTurnSettingsOf(sub));
 				// Fan-in timeout settings
 				if (typeof sub.fan_in_timeout_minutes === 'number') {
 					(targetNode.data as AgentNodeData).fanInTimeoutMinutes = sub.fan_in_timeout_minutes;

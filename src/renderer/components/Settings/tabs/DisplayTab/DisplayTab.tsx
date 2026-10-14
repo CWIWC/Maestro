@@ -145,6 +145,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setShowStarredSessionsSection={settings.setShowStarredSessionsSection}
 				showLeftPanelGroupMemberCount={settings.showLeftPanelGroupMemberCount}
 				setShowLeftPanelGroupMemberCount={settings.setShowLeftPanelGroupMemberCount}
+				showLeftPanelCollapsedInitials={settings.showLeftPanelCollapsedInitials}
+				setShowLeftPanelCollapsedInitials={settings.setShowLeftPanelCollapsedInitials}
 				leftPanelCollapsedPillsPerRow={settings.leftPanelCollapsedPillsPerRow}
 				setLeftPanelCollapsedPillsPerRow={settings.setLeftPanelCollapsedPillsPerRow}
 				showLeftPanelLocationPills={settings.showLeftPanelLocationPills}

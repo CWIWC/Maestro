@@ -106,6 +106,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteAutoRunSteeringCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
@@ -210,6 +213,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteAutoRunSteeringCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteAutoRunSteeringCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteAutoRunSteeringCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -1750,6 +1758,50 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote close tab', () => {
+		it('keeps the last-tab replacement stable across duplicate closes and browser inventory sync', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCloseTabHandler?.('session-1', 'tab-1');
+				onRemoteCloseTabHandler?.('session-1', 'tab-1');
+			});
+			const desktop = useSessionStore.getState().sessions[0];
+			expect(desktop.aiTabs).toHaveLength(1);
+			expect(desktop.aiTabs[0].id).not.toBe('tab-1');
+			expect(desktop.unifiedClosedTabHistory).toEqual([
+				expect.objectContaining({ type: 'ai', tab: expect.objectContaining({ id: 'tab-1' }) }),
+			]);
+
+			// Apply the authoritative inventory to a browser still holding the old
+			// tab. Its next save and bootstrap must contain the desktop's one id.
+			act(() => {
+				useSessionStore.setState({ sessions: [session] });
+				onRemoteSelectTabHandler?.('session-1', '', desktop.aiTabs);
+			});
+			const browser = useSessionStore.getState().sessions[0];
+			expect(browser.aiTabs.map((tab) => tab.id)).toEqual(desktop.aiTabs.map((tab) => tab.id));
+			expect(browser.activeTabId).toBe(desktop.activeTabId);
+		});
+
+		it('does not put closed wizard progress in reopen history', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'wizard', wizardState: { isActive: true } as any })],
+				activeTabId: 'wizard',
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => onRemoteCloseTabHandler?.('session-1', 'wizard'));
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.closedTabHistory ?? []).toEqual([]);
+			expect(updated.unifiedClosedTabHistory ?? []).toEqual([]);
+		});
+
 		it('closes tab in session', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
@@ -1809,6 +1861,50 @@ describe('useRemoteIntegration', () => {
 			>;
 			expect(send).toHaveBeenCalledWith(
 				'snooze-response',
+				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
+	describe('remote Auto Run steering command', () => {
+		// The CLI process on the far end blocks on this reply, so the listener has
+		// to answer on the response channel for every outcome.
+		const sent = () =>
+			window.maestro.process.sendRemoteAutoRunSteeringCommandResponse as ReturnType<typeof vi.fn>;
+
+		it('answers a steering verb on its response channel', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
+				expect.objectContaining({ success: true, steerable: false, pending: [], deliveries: [] })
+			);
+		});
+
+		it('reports a refusal rather than leaving the caller waiting', () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				// No Auto Run is active, so there is no next task to hand a note to.
+				onRemoteAutoRunSteeringCommandHandler?.(
+					{ action: 'send', sessionId: 'session-1', text: 'steer left' },
+					'steer-response'
+				);
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'steer-response',
 				expect.objectContaining({ success: false })
 			);
 		});

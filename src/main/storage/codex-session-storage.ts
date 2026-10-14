@@ -503,8 +503,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Get the Codex sessions directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteSessionsDir(): string {
-		return '~/.codex/sessions';
+	private getRemoteSessionsDir(accountDir?: string): string {
+		return path.posix.join(accountDir || '~/.codex', 'sessions');
 	}
 
 	/**
@@ -583,9 +583,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Recursively scans the YYYY/MM/DD directory structure
 	 */
 	private async findAllSessionFilesRemote(
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getRemoteSessionsDir();
+		const sessionsDir = this.getRemoteSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 		// List YYYY directories
@@ -848,7 +849,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
 		}
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const allSessionFiles = await this.findAllSessionFiles(accountDir);
@@ -948,9 +949,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig);
+		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig, accountDir);
 
 		if (allSessionFiles.length === 0) {
 			logger.info(`No Codex sessions found on remote`, LOG_CONTEXT);

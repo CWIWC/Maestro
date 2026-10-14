@@ -199,6 +199,30 @@ describe('firing the retry', () => {
 		expect(getRetryEntry('s8', 't1')?.status).toBe('in-flight');
 	});
 
+	// `processQueuedItem` marks nothing busy - its callers do - and the resend
+	// used to skip that half. The provider ran the turn while the tab read idle:
+	// no Thinking pill, no pulsing dot, and the failed attempt's last output on
+	// screen as if it were the answer.
+	it('marks the tab running before the resend, without a second user bubble', () => {
+		setupSession('s8b', 't1');
+		seedSnapshot('s8b', 't1');
+		scheduleRetryForError('s8b', 't1', overload());
+		let stateAtDispatch: { session?: string; tab?: string } = {};
+		processQueuedItem.mockImplementation(async () => {
+			const s = useSessionStore.getState().sessions.find((x) => x.id === 's8b');
+			stateAtDispatch = { session: s?.state, tab: s?.aiTabs[0].state };
+			return true;
+		});
+
+		retryNow('s8b', 't1');
+
+		expect(stateAtDispatch).toEqual({ session: 'busy', tab: 'busy' });
+		const session = useSessionStore.getState().sessions.find((x) => x.id === 's8b')!;
+		expect(session.busySource).toBe('ai');
+		expect(session.aiTabs[0].thinkingStartTime).toBe(NOW);
+		expect(session.aiTabs[0].logs.filter((l) => l.source === 'user')).toHaveLength(0);
+	});
+
 	it('retryNow cancels the timer and fires immediately', () => {
 		setupSession('s9', 't1');
 		seedSnapshot('s9', 't1');

@@ -210,6 +210,78 @@ describe('useAgentSessionManagement', () => {
 		expect(payload.contextUsage).toBe(75);
 	});
 
+	describe('SSH shared-history context', () => {
+		const sshAgent = () =>
+			createMockSession({
+				id: 'ssh-agent',
+				cwd: '/remote/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'studio', syncHistory: true },
+			});
+		const localAgent = () => createMockSession({ id: 'local-agent', cwd: '/local/project' });
+
+		const renderWith = (sessions: Session[], activeSessionId: string) => {
+			useSessionStore.setState({ sessions, activeSessionId } as any);
+			return renderHook(() =>
+				useAgentSessionManagement({
+					setSessions: vi.fn(),
+					setActiveAgentSessionId: vi.fn(),
+					setAgentSessionsOpen: vi.fn(),
+					rightPanelRef: createRightPanelRef(),
+					defaultSaveToHistory: false,
+				})
+			);
+		};
+
+		it('does not mirror a background local agent into the active SSH agent host', async () => {
+			const { result } = renderWith([sshAgent(), localAgent()], 'ssh-agent');
+
+			await act(async () => {
+				await result.current.addHistoryEntry({
+					type: 'USER',
+					summary: 'Finished in the background',
+					sessionId: 'local-agent',
+					projectPath: '/local/project',
+				});
+			});
+
+			const [payload, sharedContext] = vi.mocked(window.maestro.history.add).mock.calls[0];
+			expect(payload.sessionId).toBe('local-agent');
+			expect(sharedContext).toBeUndefined();
+		});
+
+		it('mirrors a background SSH agent to its own host while a local agent is active', async () => {
+			const { result } = renderWith([sshAgent(), localAgent()], 'local-agent');
+
+			await act(async () => {
+				await result.current.addHistoryEntry({
+					type: 'USER',
+					summary: 'Finished in the background',
+					sessionId: 'ssh-agent',
+					projectPath: '/remote/project',
+				});
+			});
+
+			const [, sharedContext] = vi.mocked(window.maestro.history.add).mock.calls[0];
+			expect(sharedContext).toEqual({ sshRemoteId: 'studio', remoteCwd: '/remote/project' });
+		});
+
+		it('sends no context for an entry whose agent is no longer in the store', async () => {
+			const { result } = renderWith([sshAgent()], 'ssh-agent');
+
+			await act(async () => {
+				await result.current.addHistoryEntry({
+					type: 'AUTO',
+					summary: 'Agent was removed mid-turn',
+					sessionId: 'gone-agent',
+					projectPath: '/somewhere/else',
+				});
+			});
+
+			const [, sharedContext] = vi.mocked(window.maestro.history.add).mock.calls[0];
+			expect(sharedContext).toBeUndefined();
+		});
+	});
+
 	it('switches to an existing tab when resuming a known agent session', async () => {
 		const existingTab = createMockTab({
 			id: 'tab-existing',

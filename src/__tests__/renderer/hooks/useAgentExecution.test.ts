@@ -5,6 +5,8 @@ import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/t
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { observeEffortRejection } from '../../../renderer/services/effortRejection';
+import { resetEffortRejections } from '../../../shared/effortRejection';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -967,6 +969,206 @@ describe('useAgentExecution', () => {
 				onExitHandler?.(targetSessionId);
 			});
 			await spawnPromise;
+		});
+	});
+
+	describe('effort refused by the provider', () => {
+		// What the agent-error listener sees when the API answers the effort a
+		// turn asked for with a 400. The turn never ran. `observeEffortRejection`
+		// is the call that listener makes for every agent error.
+		const refusal = (value: string) => ({
+			agentId: 'claude-code',
+			message: `{"type":"error","error":{"message":"Unsupported value: '${value}' is not supported with the 'some-model' model. Supported values are: 'medium', 'high'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}`,
+		});
+
+		afterEach(() => {
+			resetEffortRejections();
+		});
+
+		const renderExecution = (session: Session) =>
+			renderHook(() =>
+				useAgentExecution({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					setSessions: vi.fn(),
+					processQueuedItemRef: { current: null },
+					setFlashNotification: vi.fn(),
+					setSuccessFlashNotification: vi.fn(),
+				})
+			);
+
+		it('re-runs an Auto Run task at the agent own effort instead of failing it', async () => {
+			const session = createMockSession({ customEffort: 'medium' });
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Do the task',
+				undefined,
+				{
+					isAutoRun: true,
+					modelOverride: 'opus',
+					effortOverride: 'max',
+				}
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+			expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('max');
+
+			observeEffortRejection(firstId, refusal('max'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(firstId, 1);
+			});
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retry = mockProcess.spawn.mock.calls[1][0];
+			// The override is gone, so the session's own effort is what is sent.
+			expect(retry.sessionCustomEffort).toBe('medium');
+			// Everything else about the task is unchanged.
+			expect(retry.sessionCustomModel).toBe('opus');
+			expect(retry.prompt).toBe('Do the task');
+			expect(retry.querySource).toBe('auto');
+
+			onDataHandler?.(retry.sessionId, 'done');
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(retry.sessionId, 0);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(true);
+			expect(outcome.response).toBe('done');
+		});
+
+		it('does not retry a task that sent no effort override', async () => {
+			// The session's own configured effort was refused. That is the user's
+			// setting to change, and there is nothing of Maestro's left to drop.
+			const session = createMockSession({ customEffort: 'max' });
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Do the task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			observeEffortRejection(firstId, refusal('max'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(firstId, 1);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(false);
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not retry an armed task that failed for another reason', async () => {
+			const session = createMockSession();
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Do the task',
+				undefined,
+				{
+					isAutoRun: true,
+					effortOverride: 'max',
+				}
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			observeEffortRejection(firstId, { agentId: 'claude-code', message: 'Not logged in' });
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(firstId, 1);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(false);
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('re-runs a synopsis once the cheap effort is refused', async () => {
+			const session = createMockSession();
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnBackgroundSynopsis(
+				session.id,
+				session.cwd,
+				'resume-123',
+				'Summarize session',
+				'claude-code',
+				{ customModel: 'opus', customEffort: 'high' }
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const first = mockProcess.spawn.mock.calls[0][0];
+			expect(first.sessionCustomEffort).toBe('low');
+
+			observeEffortRejection(first.sessionId, refusal('low'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(first.sessionId, 1);
+			});
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retry = mockProcess.spawn.mock.calls[1][0];
+			// The ladder no longer hands out `low`, so the tab's own effort stands.
+			expect(retry.sessionCustomEffort).toBe('high');
+			// The cheap MODEL is still wanted; only the effort was refused.
+			expect(retry.sessionCustomModel).toBe('haiku');
+			expect(retry.agentSessionId).toBe('resume-123');
+
+			onDataHandler?.(retry.sessionId, 'A summary');
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(retry.sessionId, 0);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(true);
+			expect(outcome.response).toBe('A summary');
+		});
+
+		it('does not loop when the refusal is not one the ladder can act on', async () => {
+			// A refusal of some OTHER value leaves `low` in the ladder, so a retry
+			// would send the same effort again. It must fail once, not spin.
+			const session = createMockSession();
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnBackgroundSynopsis(
+				session.id,
+				session.cwd,
+				'resume-123',
+				'Summarize session',
+				'claude-code'
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const first = mockProcess.spawn.mock.calls[0][0];
+
+			observeEffortRejection(first.sessionId, refusal('ultra'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(first.sessionId, 1);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(false);
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
 		});
 	});
 });

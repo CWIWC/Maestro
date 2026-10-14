@@ -34,6 +34,7 @@ import {
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
 import { killPty } from './utils/commandKill';
+import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -407,15 +408,24 @@ export class ProcessManager extends EventEmitter {
 				} else {
 					child.kill('SIGINT');
 				}
+				// The local child is only the ssh client for a remote agent; the agent
+				// itself never sees that SIGINT. Ask its host to deliver one.
+				this.signalRemote(sessionId, process, 'interrupt');
 
 				// Escalate to forceful kill if the process doesn't exit promptly.
 				// Some agents (e.g., Claude Code --print) may not exit on SIGINT alone.
-				// On Windows, we don't call child.kill('SIGINT') because it's unreliable
-				// for shell-spawned processes. The .killed flag remains false, which
-				// correctly allows the escalation timer to fire.
+				// Test for an observed exit, NOT `.killed`: node sets `.killed` as soon
+				// as a signal is DELIVERED, so after the SIGINT above it was always true
+				// on macOS and Linux and this escalation never fired there.
 				const escalationTimer = setTimeout(() => {
 					const stillRunning = this.processes.get(sessionId);
-					if (stillRunning?.childProcess && !stillRunning.childProcess.killed) {
+					const stillChild = stillRunning?.childProcess;
+					if (
+						stillChild &&
+						stillChild === child &&
+						stillChild.exitCode === null &&
+						(stillChild.signalCode === null || stillChild.signalCode === undefined)
+					) {
 						logger.warn(
 							'[ProcessManager] Process did not exit after interrupt, escalating to kill',
 							'ProcessManager',
@@ -523,6 +533,7 @@ export class ProcessManager extends EventEmitter {
 					});
 				}
 			} else if (proc.childProcess) {
+				this.signalRemote(sessionId, proc, 'terminate');
 				const pid = proc.childProcess.pid;
 				if (isWindows() && pid) {
 					this.killWindowsProcessTree(pid, sessionId, sync);
@@ -547,6 +558,23 @@ export class ProcessManager extends EventEmitter {
 			});
 			return false;
 		}
+	}
+
+	/**
+	 * Deliver a signal to an SSH-hosted agent on its remote host. A no-op for
+	 * local processes and for SSH spawns that recorded no remote pid.
+	 */
+	private signalRemote(sessionId: string, proc: ManagedProcess, mode: RemoteSignalMode): void {
+		if (!proc.sshRemotePidFile || !proc.command || !proc.args) return;
+		signalRemoteAgent(
+			{
+				sshCommand: proc.command,
+				sshArgs: proc.args,
+				pidFile: proc.sshRemotePidFile,
+				sessionId,
+			},
+			mode
+		);
 	}
 
 	/**

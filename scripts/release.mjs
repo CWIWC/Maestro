@@ -145,7 +145,7 @@ function needBranch(opts) {
 
 function needTag(opts) {
 	if (typeof opts.tag !== 'string' || !/^v\d+\.\d+\.\d+(-RC)?$/.test(opts.tag)) {
-		misuse('--tag must look like v0.17.5 or v0.18.6-RC');
+		misuse('--tag must look like v1.0.1 or v1.1.0-RC');
 	}
 	return opts.tag;
 }
@@ -158,6 +158,28 @@ function scopeBranches(opts) {
 }
 
 const isRcTag = (tag) => /-rc$/i.test(tag);
+
+/**
+ * Why `version` cannot ship from `branch`, or null when it can. From 1.0 on the
+ * minor's parity names the line: main is X.EVEN.z, rc is X.ODD.z-RC. Before 1.0
+ * it was the other way round (0.17.x stable, 0.18.x-RC), so the parity rule only
+ * applies from major 1 up; the -RC suffix rule applies to every version.
+ */
+function channelMismatch(branch, version) {
+	const rc = isRcTag(version);
+	if ((branch === 'rc') !== rc) {
+		return rc ? 'main must never carry an -RC version' : 'rc versions must end in -RC';
+	}
+	const m = version.match(/^(\d+)\.(\d+)\./);
+	if (!m || Number(m[1]) < 1) return null;
+	const oddMinor = Number(m[2]) % 2 === 1;
+	if (oddMinor !== rc) {
+		return rc
+			? `rc versions need an ODD minor (X.ODD.z-RC), not ${version}`
+			: `main versions need an EVEN minor (X.EVEN.z), not ${version}`;
+	}
+	return null;
+}
 const versionOf = (tag) => tag.replace(/^v/, '');
 const releaseUrl = (tag) => `https://github.com/${REPO}/releases/tag/${tag}`;
 
@@ -305,8 +327,11 @@ function preflightBranch(branch, releases) {
 	const { published, drafts } = releasesForTag(tag, releases);
 	const problems = [];
 
-	if ((branch === 'rc') !== isRcTag(tag)) {
-		problems.push(`${branch} carries version ${version}, which is on the wrong channel`);
+	const mismatch = channelMismatch(branch, version);
+	if (mismatch) {
+		problems.push(
+			`${branch} carries version ${version}, which is on the wrong channel: ${mismatch}`
+		);
 	}
 	const tagCommit = remoteTagCommit(tag);
 	if (published.length > 0 || tagCommit) {
@@ -640,8 +665,8 @@ async function tagCommand(opts) {
 
 	const version = packageVersionAt(sha);
 	const tag = `v${version}`;
-	if ((branch === 'rc') !== isRcTag(tag))
-		misuse(`${branch} at ${sha.slice(0, 9)} carries ${version}`);
+	const mismatch = channelMismatch(branch, version);
+	if (mismatch) misuse(`${branch} at ${sha.slice(0, 9)} carries ${version}: ${mismatch}`);
 
 	const existing = remoteTagCommit(tag);
 	if (existing) {
@@ -913,7 +938,8 @@ function bumpCommand(opts) {
 	const { published } = releasesForTag(tag);
 	if (!published.length) misuse(`${tag} is not published yet; bump only after it ships`);
 	const next = nextVersion(current);
-	if (branch === 'main' && /-rc/i.test(next)) misuse('main must never carry an -RC version');
+	const mismatch = channelMismatch(branch, next);
+	if (mismatch) misuse(`Refusing to bump ${branch} to ${next}: ${mismatch}`);
 
 	const files = {
 		'package.json': replaceVersion(gitFileAt(base, 'package.json'), current, next, 1),

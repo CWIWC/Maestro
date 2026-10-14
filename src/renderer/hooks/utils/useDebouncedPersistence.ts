@@ -582,7 +582,13 @@ export function useDebouncedPersistence(
 		};
 
 		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
-			if (state.sessions === prevState.sessions) return;
+			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
+			// the read succeeding is the moment that tree becomes the baseline.
+			// Missing it left the first flush on setAll, which keeps every id the
+			// client omits, so an agent removed during startup (a worktree child
+			// the startup scan found gone) came back on the next launch.
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
 			if (
 				!initialLoadComplete.current &&
@@ -593,6 +599,7 @@ export function useDebouncedPersistence(
 				startupBaselineNeedsFullFlushRef.current = true;
 				return;
 			}
+			if (state.sessions === prevState.sessions) return;
 			schedulePersist();
 		});
 

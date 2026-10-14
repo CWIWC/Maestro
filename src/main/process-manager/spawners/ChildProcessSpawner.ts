@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -15,9 +16,17 @@ import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
+import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
+import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
@@ -405,6 +414,24 @@ export class ChildProcessSpawner {
 			// to isolate mutable state like tool name tracking across concurrent sessions
 			const outputParser = createOutputParser(toolType) || undefined;
 
+			// Claude reports its cost and per-model usage as running SESSION totals.
+			// Hand its parser the session's total as this turn starts, read from
+			// the transcript it resumes, so the usage it emits is this turn's
+			// alone (see src/shared/claudeCostTracker.ts).
+			const resumeSessionId = config.agentSessionId ?? resumeIdFromArgs(args);
+			if (toolType === 'claude-code' && resumeSessionId && outputParser?.primeResumedSession) {
+				outputParser.primeResumedSession(
+					resumeSessionId,
+					readClaudeTurnBaseline({
+						resumeSessionId,
+						cwd,
+						env,
+						homeDir: os.homedir(),
+						remote: !!config.sshRemoteId,
+					})
+				);
+			}
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
@@ -426,6 +453,11 @@ export class ChildProcessSpawner {
 				command: config.command,
 				argsCount: finalArgs.length,
 			});
+
+			// A stdin-script SSH spawn records the remote agent's pid so Stop can
+			// reach it: signalling only the local ssh client leaves it running.
+			const sshRemotePidFile =
+				config.sshStdinScript && sshConnectionArgs(finalArgs) ? newRemotePidFilePath() : undefined;
 
 			const managedProcess: ManagedProcess = {
 				sessionId,
@@ -452,6 +484,7 @@ export class ChildProcessSpawner {
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
 				sshRemoteCommand: config.sshRemoteCommand,
+				sshRemotePidFile,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
@@ -590,11 +623,44 @@ export class ChildProcessSpawner {
 				// unregistered, and handleExit must settle THIS process rather than
 				// whatever currently owns the session id.
 				void this.exitHandler.handleExit(sessionId, code || 0, managedProcess).catch((err) => {
+					void captureException(err);
 					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 						sessionId,
 						error: String(err),
 					});
+					// handleExit releases the entry immediately before emitting `exit`,
+					// so an entry that is still ours means it threw before getting there.
+					// Left alone, that entry owns the tab forever: every later spawn is
+					// refused as "already running" and the renderer never learns the turn
+					// ended. Release it and report the exit so the turn settles.
+					if (this.processes.get(sessionId) === managedProcess) {
+						this.processes.delete(sessionId);
+						this.emitter.emit('exit', sessionId, code || 0);
+					}
 				});
+			});
+
+			// `close` waits on every holder of the stdio pipes, and an SSH
+			// ControlMaster or a stray grandchild can hold them long after the child
+			// itself is dead. Without this, a stopped SSH turn left its entry behind
+			// and the tab's queue hot-looped against the spawn refusal.
+			armStdioCloseWatchdog(childProcess, {
+				onForceClose: () => {
+					logger.warn(
+						'[ProcessManager] stdio still open after exit, forcing close',
+						'ProcessManager',
+						{ sessionId, pid: childProcess.pid }
+					);
+					// For SSH the open stdio usually means the remote agent is still
+					// running behind a ControlMaster. Settling the turn while it keeps
+					// working would put a second writer on the session next turn.
+					if (sshRemotePidFile) {
+						signalRemoteAgent(
+							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+							'terminate'
+						);
+					}
+				},
 			});
 
 			// Handle errors
@@ -617,7 +683,11 @@ export class ChildProcessSpawner {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
 				});
-				childProcess.stdin?.write(config.sshStdinScript);
+				childProcess.stdin?.write(
+					sshRemotePidFile
+						? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile)
+						: config.sshStdinScript
+				);
 				childProcess.stdin?.end();
 			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
 				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
@@ -661,4 +731,14 @@ export class ChildProcessSpawner {
 			return { pid: -1, success: false };
 		}
 	}
+}
+
+/** The session id a `--resume <id>` (or `--resume=<id>`) argument names, if any. */
+function resumeIdFromArgs(args: readonly string[]): string | undefined {
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === '--resume') return args[i + 1] || undefined;
+		if (arg.startsWith('--resume=')) return arg.slice('--resume='.length) || undefined;
+	}
+	return undefined;
 }

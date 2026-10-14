@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { SessionList } from '../../../renderer/components/SessionList';
+import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { seedSidebarNav, resetSidebarNavStore } from '../../helpers/seedSidebarNav';
@@ -997,6 +998,57 @@ describe('SessionList', () => {
 	// ============================================================================
 
 	describe('Groups Section', () => {
+		describe('in a secondary window', () => {
+			afterEach(() => {
+				window.history.replaceState({}, '', '/');
+			});
+
+			it('draws only the groups holding agents it owns, so a moved group arrives as a group', async () => {
+				window.history.replaceState({}, '', '/?windowId=win-2');
+				vi.mocked(window.maestro.windows.getState).mockResolvedValue({
+					id: 'win-2',
+					x: 0,
+					y: 0,
+					width: 800,
+					height: 600,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: ['s1', 's2'],
+					activeSessionId: 's1',
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: false,
+				});
+				vi.mocked(window.maestro.windows.list).mockResolvedValue([
+					{ id: 'main', isMain: true, sessionIds: [], activeSessionId: null },
+					{ id: 'win-2', isMain: false, sessionIds: ['s1', 's2'], activeSessionId: 's1' },
+				]);
+				const sessions = [
+					createMockSession({ id: 's1', name: 'Moved Agent', groupId: 'g1' }),
+					createMockSession({ id: 's2', name: 'Loose Agent' }),
+					createMockSession({ id: 's3', name: 'Stayed Behind', groupId: 'g2' }),
+				];
+				useSessionStore.setState({
+					sessions,
+					groups: [
+						createMockGroup({ id: 'g1', name: 'Council' }),
+						createMockGroup({ id: 'g2', name: 'Elsewhere' }),
+					],
+				});
+				useUIStore.setState({ leftSidebarOpen: true });
+				render(
+					<WindowProvider>
+						<SessionList {...createDefaultProps({ sortedSessions: sessions })} />
+					</WindowProvider>
+				);
+
+				await waitFor(() => expect(screen.getByText('Council')).toBeInTheDocument());
+				expect(screen.queryByText('Elsewhere')).not.toBeInTheDocument();
+				expect(screen.queryByText('Stayed Behind')).not.toBeInTheDocument();
+				expect(screen.getByText('Moved Agent')).toBeInTheDocument();
+				expect(screen.getByText('Loose Agent')).toBeInTheDocument();
+			});
+		});
+
 		it('renders groups with their sessions', () => {
 			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
 			const sessions = [createMockSession({ id: 's1', name: 'Session in Group', groupId: 'g1' })];
@@ -2314,7 +2366,7 @@ describe('SessionList', () => {
 	// ============================================================================
 
 	describe('Skinny Mode', () => {
-		it('renders session dots in collapsed mode', () => {
+		it('labels each agent with its initials in collapsed mode by default', () => {
 			const sessions = [
 				createMockSession({ id: 's1', name: 'Session 1' }),
 				createMockSession({ id: 's2', name: 'Session 2' }),
@@ -2326,9 +2378,32 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Should have circular session indicators
-			const dots = container.querySelectorAll('.rounded-full.w-3.h-3');
-			expect(dots.length).toBe(2);
+			const badges = container.querySelectorAll('[data-testid="skinny-initials-badge"]');
+			expect(Array.from(badges, (b) => b.textContent)).toEqual(['S1', 'S2']);
+			expect(container.querySelectorAll('.rounded-full.w-3.h-3').length).toBe(0);
+		});
+
+		it('renders session dots in collapsed mode when initials are turned off', () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Session 1' }),
+				createMockSession({ id: 's2', name: 'Session 2' }),
+			];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: false });
+			useSettingsStore.setState({ showLeftPanelCollapsedInitials: false });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			try {
+				const { container } = render(<SessionList {...props} />);
+
+				// Should have circular session indicators
+				const dots = container.querySelectorAll('.rounded-full.w-3.h-3');
+				expect(dots.length).toBe(2);
+				expect(container.querySelector('[data-testid="skinny-initials-badge"]')).toBeNull();
+			} finally {
+				useSettingsStore.setState({ showLeftPanelCollapsedInitials: true });
+			}
 		});
 
 		it('selects session when dot clicked in collapsed mode', () => {

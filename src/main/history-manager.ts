@@ -5,7 +5,7 @@
  * history files stored in a dedicated `history/` subdirectory.
  *
  * Benefits:
- * - Higher limits: 5,000 entries per session (up from 1,000 global)
+ * - Higher limits: a per-session cap set by `maxLogBuffer` (default 10,000, up from 1,000 global)
  * - Context passing: History files can be passed directly to AI agents
  * - Better isolation: Sessions don't pollute each other's history
  * - Simpler queries: No filtering needed when reading a session's history

@@ -304,6 +304,36 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli window`
+
+List Maestro windows, and move agents or whole groups between them
+
+## `maestro-cli window list`
+
+List open windows and the agents each one holds
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli window move-agent <agent-id>`
+
+Move an agent (with its worktrees) to another window
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--to <window>` | "new", "main", a window number, a window id, or a window name | -       |
+| `--json`        | Output as JSON                                                | -       |
+
+## `maestro-cli window move-group <group-id>`
+
+Move every agent in a group (with subgroups when nesting is on) to another window
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--to <window>` | "new", "main", a window number, a window id, or a window name | -       |
+| `--json`        | Output as JSON                                                | -       |
+
 ## `maestro-cli snooze`
 
 Park a tab until later, and manage what is parked
@@ -454,7 +484,7 @@ Stop a group chat's moderator and participants
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)
 
 | Option             | Description                                                                                   | Default |
 | ------------------ | --------------------------------------------------------------------------------------------- | ------- |
@@ -676,6 +706,43 @@ Point an agent at a different Auto Run folder (relative paths resolve against th
 | `-a, --agent <id>` | Target agent ID                | -       |
 | `--json`           | Output as JSON (for scripting) | -       |
 
+## `maestro-cli steer-auto-run`
+
+Course-correct a running Auto Run without stopping it
+
+## `maestro-cli steer-auto-run send <note>`
+
+Send a steering note; it is delivered at the start of the next task
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose Auto Run to steer                                     | -       |
+| `--background`     | Queue it without flashing the "Steering note queued" confirmation | -       |
+| `--focus`          | Show the confirmation flash (the default)                         | -       |
+| `--json`           | Output the stored note as JSON                                    | -       |
+
+## `maestro-cli steer-auto-run list`
+
+Show the notes still waiting, and each delivered note with its task reply
+
+| Option             | Description                                                       | Default |
+| ------------------ | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose steering notes to read                                | -       |
+| `--background`     | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: reading the notes changes nothing on screen | -       |
+| `--json`           | Output as JSON, including each full reply                         | -       |
+
+## `maestro-cli steer-auto-run cancel <note-id>`
+
+Take back a note no task has read yet (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the note                                | -       |
+| `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
+| `--json`           | Output the cancelled note as JSON                        | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
@@ -739,6 +806,20 @@ List all Cue subscriptions across agents
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli cue model <subscription-name>`
+
+Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)
+
+| Option                     | Description                                               | Default |
+| -------------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two) | -       |
+| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)       | -       |
+| `--model <id>`             | Exact model id (instead of --tier)                        | -       |
+| `--effort <level>`         | Effort: low, medium, high (mapped per provider)           | -       |
+| `--clear-model`            | Remove the tier / model and use the agent's own model     | -       |
+| `--clear-effort`           | Remove the effort and use the agent's own effort          | -       |
+| `--json`                   | Output as JSON (for scripting)                            | -       |
+
 ## `maestro-cli cue enable <subscription>`
 
 Turn a Cue subscription on (name, or the full id from `cue list --json`)
@@ -793,6 +874,9 @@ Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 | `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                   | -       |
 | `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                        | -       |
 | `--grace-minutes <n>`      | Override the default 360-minute grace window                                                          | -       |
+| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                | -       |
+| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                 | -       |
+| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                    | -       |
 | `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure) | -       |
 | `--json`                   | Output as JSON (for scripting)                                                                        | -       |
 
@@ -2011,6 +2095,14 @@ List the provider accounts the Feedback chat can run as, in the order it tries t
 | `--use <key>` | Make this account (a key from the list) the one the next chat tries first | -       |
 | `--clear`     | Forget the remembered account and pick automatically again                | -       |
 | `--json`      | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli feedback diagnose`
+
+Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli feedback search <query>`
 

@@ -6,18 +6,22 @@ import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
+	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
 	createTab,
 	closeTab,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
+	hasActiveWizard,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem, enqueuePromptForTab } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
@@ -812,9 +816,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
 			(sessionId: string, tabId: string) => {
 				updateSessionWith(sessionId, (s) => {
-					// Use closeTab helper (handles last tab by creating a fresh one)
-					const result = closeTab(s, tabId);
-					return result?.session ?? s;
+					const tab = s.aiTabs.find((t) => t.id === tabId);
+					if (!tab) return s;
+					const isWizardTab = hasActiveWizard(tab);
+					const result = closeTab(s, tabId, undefined, { skipHistory: isWizardTab });
+					if (!result) return s;
+					const unifiedIndex = s.unifiedTabOrder.findIndex(
+						(ref) => ref.type === 'ai' && ref.id === tabId
+					);
+					return isWizardTab
+						? result.session
+						: addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
 				});
 			}
 		);
@@ -1781,6 +1793,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				})
 			);
 		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
+	// notes are this renderer's state and its run loop is what reads them, so
+	// every verb is answered here, through the same service the Thought Stream
+	// panel's Steer bar calls.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteAutoRunSteeringCommand(
+			(request, responseChannel) => {
+				const reply = (result: SteeringCommandResult) =>
+					window.maestro.process.sendRemoteAutoRunSteeringCommandResponse(responseChannel, result);
+				try {
+					reply(runRemoteSteeringCommand(request));
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Steering command failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
 		return () => {
 			unsubscribe();
 		};

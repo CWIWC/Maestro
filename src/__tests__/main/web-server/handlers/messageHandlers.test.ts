@@ -2703,6 +2703,39 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Get Auto Run State (auto-run-status)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('answers with the live broadcast state, not the session detail', () => {
+			// Regression: the handler read `autoRunState` off the session detail, which
+			// never carries it, so a running Auto Run always read as not running.
+			const live = { isRunning: true, totalTasks: 16, completedTasks: 3 };
+			callbacks.getAutoRunState = vi.fn().mockReturnValue(live);
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, { type: 'get_auto_run_state', sessionId: 'session-1' });
+
+			expect(callbacks.getAutoRunState).toHaveBeenCalledWith('session-1');
+			expect(lastSend()).toMatchObject({
+				type: 'auto_run_state',
+				sessionId: 'session-1',
+				state: live,
+			});
+		});
+
+		it('answers null when nothing is running', () => {
+			callbacks.getAutoRunState = vi.fn().mockReturnValue(undefined);
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, { type: 'get_auto_run_state', sessionId: 'session-1' });
+
+			expect(lastSend()).toMatchObject({ type: 'auto_run_state', state: null });
+		});
+	});
+
 	describe('Refresh File Tree (Web → Desktop)', () => {
 		it('should forward refresh file tree to desktop', async () => {
 			handler.handleMessage(client, {

@@ -23,6 +23,11 @@
 // and an untrusted folder parks the TUI on its "trust this folder?" dialog.
 // T16/T17 test that dialog on purpose, in an untrusted temp folder.
 //
+// T23 runs plain `claude -p` (no maestro-p) on the plan login. It is the
+// tripwire for Anthropic making `--bare` the default for `-p`: bare mode never
+// reads the plan login, so on that release every agent on the `claude -p`
+// token source with no API key starts failing to authenticate.
+//
 // Exit: 0 all pass, 2 only known-issue failures, 1 any unexpected failure.
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -381,6 +386,10 @@ async function parallelCases(s, want) {
 		T02: {
 			prompt: 'Use the Bash tool to run: echo tuitest-$((6*7))  Then reply with only its output.',
 		},
+		T24: {
+			prompt:
+				"Use the Task tool with subagent_type general-purpose and this exact prompt for it: 'First write the sentence: starting now. Then run the Bash command echo sub-$((6*7)). Then write: finished.' Then reply with exactly: done",
+		},
 		T04: {
 			prompt: `Repeat the text between <x> and </x> verbatim inside a fenced code block, nothing else.\n<x>${HOSTILE}</x>`,
 		},
@@ -444,9 +453,16 @@ function judge(s, R, want) {
 		const r = R.T01;
 		const types = r.rows.map((x) => x?.type);
 		const init = r.rows.find((x) => x?.type === 'system');
-		const missing = ['subtype', 'is_error', 'duration_ms', 'result', 'session_id', 'usage'].filter(
-			(k) => !(k in r.res)
-		);
+		const missing = [
+			'subtype',
+			'is_error',
+			'duration_ms',
+			'result',
+			'session_id',
+			'usage',
+			'modelUsage',
+			'total_cost_usd',
+		].filter((k) => !(k in r.res));
 		const ok =
 			r.rc === EXIT.ok &&
 			types[0] === 'system' &&
@@ -457,12 +473,40 @@ function judge(s, R, want) {
 			missing.length === 0 &&
 			r.sid &&
 			init?.session_id === r.sid &&
+			typeof init?.model === 'string' &&
+			r.res.total_cost_usd > 0 &&
 			r.text.includes('PONG-7731');
 		s.verdict(
 			'T01',
 			'basic run, envelope shape matches claude -p',
 			ok,
-			`types=${[...new Set(types)].sort()} missing=${missing} text=${clip(r.text)}`,
+			`types=${[...new Set(types)].sort()} missing=${missing} model=${init?.model} cost=${r.res.total_cost_usd} text=${clip(r.text)}`,
+			[r]
+		);
+	}
+	if (R.T24) {
+		// `claude -p` streams a subagent's prompt, tool calls, and tool results
+		// tagged with the Task call's id, and none of its text.
+		const r = R.T24;
+		const sub = r.rows.filter((x) => x?.parent_tool_use_id);
+		const blocks = sub.flatMap((x) =>
+			(x.message?.content || []).map((c) => `${x.type}:${c?.type}`)
+		);
+		const task = r.rows
+			.flatMap((x) => (x?.parent_tool_use_id ? [] : x?.message?.content || []))
+			.find((c) => c?.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent'));
+		s.verdict(
+			'T24',
+			'subagent work streams tagged with its Task call, as claude -p does',
+			r.rc === EXIT.ok &&
+				!!task &&
+				sub.every((x) => x.parent_tool_use_id === task.id) &&
+				blocks.includes('user:text') &&
+				blocks.includes('assistant:tool_use') &&
+				blocks.includes('user:tool_result') &&
+				!blocks.includes('assistant:text') &&
+				/done/i.test(r.text),
+			`blocks=${[...new Set(blocks)]} text=${clip(r.text)}`,
 			[r]
 		);
 	}
@@ -521,11 +565,14 @@ function judge(s, R, want) {
 	}
 	if (R.T08) {
 		const r = R.T08;
+		// `claude -p` has no idle timeout, so a silent tool call must not trip
+		// --max-wait: an open call with permissions bypassed (maestro-p always
+		// bypasses) holds the watchdog off. It used to fail this turn with exit 3.
 		s.verdict(
 			'T08',
-			'--max-wait 15 aborts a 45s turn with exit 3',
-			r.rc === EXIT.timeout && r.error === 'timeout' && r.secs < 40,
-			`error=${r.error}`,
+			'--max-wait 15 rides out a 45s silent tool call, as claude -p does',
+			r.rc === EXIT.ok && r.error === null && r.secs >= 40 && /done/i.test(r.text || ''),
+			`rc=${r.rc} error=${r.error} secs=${r.secs}`,
 			[r]
 		);
 	}
@@ -736,6 +783,7 @@ async function serialCases(s, R, want) {
 	}
 
 	if (want('T22')) await caseT22(s);
+	if (want('T23')) await caseT23(s);
 }
 
 /** SIGTERM mid-turn must take claude and the tool it is running down too. */
@@ -824,6 +872,81 @@ async function caseT22(s) {
 		title,
 		r.status === 0 && text.includes('CLI-SEND-OK') && !/node-pty|posix_spawn/.test(text + r.stderr),
 		`rc=${r.status} secs=${Math.round((Date.now() - t0) / 1000)} out=${clip(text, 120)}`
+	);
+}
+
+/**
+ * Plain `claude -p` on the plan login, with every credential that would
+ * outrank it removed. Passing proves `-p` still reads the plan login
+ * (`apiKeySource: none`) and runs against the plan's own windows (the
+ * `rate_limit_event` row). Anthropic has said `--bare` will become the default
+ * for `-p`; on that release this case fails, and so does every Maestro agent
+ * on the `claude -p` token source that has no API key set.
+ */
+async function caseT23(s) {
+	const title = 'claude -p still runs on the plan login (no --bare default yet)';
+	const claudeBin = s.opts.claudeBin || process.env.MAESTRO_CLAUDE_BIN || which('claude');
+	if (!claudeBin) {
+		s.verdict('T23', title, false, 'claude not found on PATH (pass --claude-bin)');
+		return;
+	}
+	const env = { ...s.env };
+	for (const key of [
+		'ANTHROPIC_API_KEY',
+		'ANTHROPIC_AUTH_TOKEN',
+		'ANTHROPIC_BASE_URL',
+		'CLAUDE_CODE_USE_BEDROCK',
+		'CLAUDE_CODE_USE_VERTEX',
+		'CLAUDE_CODE_USE_FOUNDRY',
+		'CLAUDE_CODE_SIMPLE',
+	]) {
+		delete env[key];
+	}
+	const t0 = Date.now();
+	const r = spawnSync(
+		claudeBin,
+		[
+			'-p',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--model',
+			s.opts.model,
+			'Reply with exactly: PLAN-P-OK',
+		],
+		{ cwd: s.mkdir('T23'), env, input: '', encoding: 'utf8', timeout: 180_000 }
+	);
+	const rows = [];
+	for (const line of (r.stdout || '').split('\n')) {
+		try {
+			rows.push(JSON.parse(line));
+		} catch {
+			// one object per line; skip anything else
+		}
+	}
+	const init = rows.find((x) => x?.type === 'system' && x.subtype === 'init');
+	const limit = rows.find((x) => x?.type === 'rate_limit_event')?.rate_limit_info;
+	const res = [...rows].reverse().find((x) => x?.type === 'result') || {};
+	const windows = limit?.unifiedWindows
+		? Object.entries(limit.unifiedWindows)
+				.map(([name, w]) => `${name}=${Math.round((w?.utilization ?? 0) * 100)}%`)
+				.join(',')
+		: 'none';
+	const ok =
+		r.status === 0 &&
+		init?.apiKeySource === 'none' &&
+		res.is_error === false &&
+		String(res.result || '').includes('PLAN-P-OK');
+	s.verdict(
+		'T23',
+		title,
+		ok,
+		`apiKeySource=${init?.apiKeySource ?? 'missing'} plan_windows=${windows} ` +
+			`secs=${Math.round((Date.now() - t0) / 1000)} result=${clip(res.result ?? res.error)}` +
+			(ok
+				? ''
+				: ' | if this reads "Failed to authenticate", --bare is now the -p default: ' +
+					'plan-only agents on the claude -p token source need the TUI Wrapper or an API key')
 	);
 }
 

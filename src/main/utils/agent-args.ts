@@ -251,32 +251,41 @@ export function buildAgentArgs(
 		finalArgs = [...finalArgs, ...agent.modelArgs(options.modelId)];
 	}
 
-	if (options.agentSessionId && agent.resumeArgs) {
-		finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
-	}
-
 	// Deduplicate repeated flag-style arguments while preserving order.
 	// Positional arguments (non-flags) are intentionally left untouched.
 	const seenFlags = new Set<string>();
-	const dedupedArgs: string[] = [];
-	for (const arg of finalArgs) {
-		if (arg.startsWith('-')) {
-			if (seenFlags.has(arg)) {
-				continue;
-			}
+	const dedupe = (args: string[]): string[] =>
+		args.filter((arg) => {
+			if (!arg.startsWith('-')) return true;
+			if (seenFlags.has(arg)) return false;
 			seenFlags.add(arg);
-		}
-		dedupedArgs.push(arg);
-	}
+			return true;
+		});
 
-	// Additional Directories are appended AFTER the dedupe on purpose. Every
-	// provider expresses a multi-directory grant by repeating its flag
-	// (`--add-dir a --add-dir b`), and the dedupe above drops repeated flag
-	// tokens - it would keep the first `--add-dir`, delete the second, and leave
-	// the orphaned path behind as a stray positional that the CLI would read as
-	// the prompt. Emitting them last also keeps them ahead of the prompt, which
-	// callers append after this function returns.
-	return [...dedupedArgs, ...buildAdditionalDirArgs(agent, options.additionalDirectories)];
+	const dedupedArgs = dedupe(finalArgs);
+	const resumeArgs =
+		options.agentSessionId && agent.resumeArgs
+			? dedupe(agent.resumeArgs(options.agentSessionId))
+			: [];
+
+	// Additional Directories skip the dedupe on purpose. Every provider expresses
+	// a multi-directory grant by repeating its flag (`--add-dir a --add-dir b`),
+	// and the dedupe above drops repeated flag tokens - it would keep the first
+	// `--add-dir`, delete the second, and leave the orphaned path behind as a
+	// stray positional that the CLI would read as the prompt.
+	//
+	// They go BEFORE the resume selector, never after it. Codex resumes with a
+	// SUBCOMMAND (`exec ... resume <id>`), and a flag placed after a subcommand
+	// belongs to that subcommand: `codex exec resume` has no `--add-dir`, so it
+	// answered `unexpected argument '--add-dir' found` and exited 2 before doing
+	// anything. A tab's first turn worked and every follow-up died in ~150ms.
+	// The selector stays last so it is still ahead of the prompt, which callers
+	// append after this function returns.
+	return [
+		...dedupedArgs,
+		...buildAdditionalDirArgs(agent, options.additionalDirectories),
+		...resumeArgs,
+	];
 }
 
 /**

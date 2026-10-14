@@ -253,7 +253,7 @@ Capture is in-memory only - it does not survive an app restart, and it is bounde
 
 ## Steering a Run in Flight
 
-You do not have to stop a run to change its direction. Open the **Thought Stream** for the running agent, click the **compass** button in its header, type what you want changed, and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
+You do not have to stop a run to change its direction. Open the **Thought Stream** for the running agent, click **Steer Auto Run** in the bar under its header, type what you want changed, and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
 
 Steering lives in the Thought Stream and nowhere else. The agent's chat composer keeps its ordinary meaning during a run: a message you type there is a message to the agent, queued for when the run finishes.
 
@@ -265,13 +265,19 @@ Use it for the things you notice while watching:
 - `The API changed. Use the v3 endpoint for the rest of these tasks.`
 - `Do not commit anything else until I say so.`
 
-**Where to see it.** Notes are listed in the Thought Stream just under the search box: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
+**The bar.** While a run can be steered, the bar under the Thought Stream header holds two buttons, **Search thought stream** and **Steer Auto Run**. Clicking either swaps the whole bar for that input; sending a note, clearing a search, or pressing Escape brings the buttons back. A search that is still filtering the stream keeps the bar on the search box, with a small compass at its right edge so you can steer without dropping the filter. The Steer button counts the notes that are still waiting.
+
+**Where to see it.** Notes are listed in the Thought Stream just under that bar: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back.
+
+**What came back.** Under a delivered note sits the reply of the task that took it: one line while collapsed, the task's whole response when you click it. It reads "still working" until that task finishes, and it is marked in red if the task failed. Notes that one task picked up together share a single reply. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
 
 **What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
 
-**When the compass is not there.** The button only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so no button.
+**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, and `steer-auto-run cancel <note-id>` takes back a waiting one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
 
-Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run, and the delivered list is cleared with it.
+**When the Steer button is not there.** It only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so the bar is the search box alone.
+
+Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run. Delivered notes and their replies stay readable after the run finishes, since the reply to a run's last note arrives as it ends, and are cleared when the next run starts.
 
 ## Session Isolation
 
@@ -283,7 +289,7 @@ Each task executes in a completely fresh AI session with its own unique session 
 
 This isolation is critical for playbooks with `Reset on Completion` documents that loop indefinitely. Each loop creates a fresh working copy from the original document, and the AI approaches it without memory of previous iterations.
 
-> **Note:** [Nudge messages](./general-usage#creating-agents) configured on an agent do not apply to Auto Run tasks. Nudge messages are only appended to interactive AI messages typed by the user. If you need persistent instructions for Auto Run tasks, include them directly in your task document or use environment variables.
+> **Note:** An agent's [New Session Message](./general-usage#when-each-message-is-sent) is prefixed to every Auto Run task, because each task starts a new provider session. Its Nudge Message is not: nudge messages are only appended to messages you type to the agent. For persistent instructions in Auto Run, use the New Session Message or include them in your task document.
 
 ## Environment Variables
 
@@ -454,11 +460,13 @@ The three levels mean the floor, the middle, and the ceiling of whatever that pr
 
 | You write         | Claude Code sends | Codex sends |
 | ----------------- | ----------------- | ----------- |
-| `effort="low"`    | `low`             | `minimal`   |
+| `effort="low"`    | `low`             | `low`       |
 | `effort="medium"` | `high`            | `medium`    |
 | `effort="high"`   | `max`             | `xhigh`     |
 
 Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
+
+Providers also retire rungs. If a provider rejects the value a level maps to, Maestro runs that task once more at the agent's configured effort, stops asking for the value until it restarts, and tells you which value was rejected.
 
 ### Provider support
 

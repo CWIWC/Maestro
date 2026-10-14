@@ -730,15 +730,35 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 **Advanced configuration options:**
 
-- **New Session Message** - A hidden message prefixed to the first message whenever a new session (tab) is created. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat.
-- **Nudge Message** - A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages - they are not included in Auto Run tasks.
+- **New Session Message** - A hidden message prefixed to the first message of every new provider session. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat. See [When Each Message Is Sent](#when-each-message-is-sent).
+- **Nudge Message** - A hidden message appended to every message you type to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. It is not added to automation. See [When Each Message Is Sent](#when-each-message-is-sent).
 - **Custom Path** - Override the default executable path
 - **Custom Arguments** - Additional command-line arguments
 - **Environment Variables** - Custom environment variables for the agent process
 - **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
-  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source-max-plan-vs-api) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+
+#### When Each Message Is Sent
+
+The two messages follow different rules. The New Session Message goes with the first turn of a new provider session, no matter how that turn starts. The Nudge Message goes only with a message you type and send straight to the agent.
+
+| How the turn starts                            | New Session Message            | Nudge Message |
+| ---------------------------------------------- | ------------------------------ | ------------- |
+| Message typed to an idle agent                 | First turn of a new tab        | Every message |
+| Message typed while the agent is busy (queued) | First turn of a new tab        | No            |
+| Slash command                                  | First turn of a new tab        | No            |
+| `maestro-cli dispatch`, a snooze wake prompt   | First turn of a new tab        | No            |
+| `maestro-cli send`                             | Every send without `--session` | No            |
+| Auto Run, document tasks (desktop and CLI)     | Every task                     | No            |
+| Auto Run, goal-driven (desktop and CLI)        | Every iteration                | No            |
+| Cue pipeline                                   | Every run                      | No            |
+| Group Chat and `@mention` consults             | No                             | No            |
+
+Auto Run and Cue start a new provider session for each task, iteration, or run, so each one gets the New Session Message. A message that joins a conversation already in progress does not repeat it: the first turn of that conversation already carried it.
+
+If automation needs an instruction on every turn, put it in the New Session Message, in the Auto Run document, or in the Cue prompt. The Nudge Message will not reach it.
 
 ### Editing Agents
 
@@ -827,9 +847,12 @@ Drag the right edge of the sidebar to resize it. The width is persisted across s
 
 Click the sidebar toggle (`Opt+Cmd+Left` / `Alt+Ctrl+Left`) to collapse the sidebar to icon-only mode. In collapsed mode:
 
-- Agents show as icons with status indicators
-- Hover for agent name tooltip
+- Each agent shows as a two-letter badge tinted with its status color (`MR` for "Maestro RC", `Ma` for "Maestro"). Letters are picked across all your agents so no two share a label where the names allow
+- The active agent gets a ring and a stronger fill; a red corner dot marks unread messages
+- Hover for the full agent tooltip
 - Click to select an agent
+
+Prefer the plain status dots? Turn off **Settings → Display → Left Side Panel → Show agent initials when collapsed**.
 
 ## Tab Management
 

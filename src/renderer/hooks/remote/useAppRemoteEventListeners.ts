@@ -14,7 +14,14 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
-import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
+import {
+	getRemoteMediaKind,
+	getRemoteMediaName,
+	isRemoteMediaUrl,
+	type MediaOpenMode,
+} from '../../../shared/mediaTypes';
+import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -228,6 +235,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
 			logger.error('[Remote] Session not found for openFileTab:', undefined, sessionId);
+			return;
+		}
+		// An http(s) URL is remote media (`maestro-cli open-file <url>`). There is
+		// no file to read and no preview tab to make, so it goes straight to the
+		// player. No agent switch either: the player is app-wide, so the agent the
+		// URL was filed under is not somewhere the user needs to be.
+		if (isRemoteMediaUrl(filePath)) {
+			const request = {
+				path: filePath,
+				name: getRemoteMediaName(filePath),
+				kind: getRemoteMediaKind(filePath),
+				sessionId: session.id,
+				sessionName: session.name,
+			};
+			const store = useMediaPlaybackStore.getState();
+			if (mediaMode === 'queue') store.enqueueMedia([request]);
+			else store.openMedia(request);
 			return;
 		}
 		const sshRemoteId =
@@ -728,11 +752,39 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// Saved playbooks and launched runs both name documents relative to the
+			// Auto Run folder without `.md`, which is what every runner joins back
+			// to a path. The CLI and Cue send absolute `.md` paths, so both cases
+			// convert them here and refuse a document outside the folder by name.
+			let folderRelativeDocuments: Array<{ filename: string; resetOnCompletion?: boolean }> = [];
+			if (config.saveAsPlaybook || config.launch) {
+				const folderPath = session.autoRunFolderPath;
+				if (!folderPath) {
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: 'No Auto Run folder configured for this session',
+					});
+					return;
+				}
+				const resolved = resolveAutoRunDocumentNames(config.documents || [], folderPath);
+				if ('error' in resolved) {
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: resolved.error,
+					});
+					return;
+				}
+				folderRelativeDocuments = resolved.documents;
+			}
+
 			// Case 1: Save as playbook
 			if (config.saveAsPlaybook) {
 				const result = await window.maestro.playbooks.create(sessionId, {
 					name: config.saveAsPlaybook,
-					documents: config.documents || [],
+					documents: folderRelativeDocuments.map((doc) => ({
+						filename: doc.filename,
+						resetOnCompletion: doc.resetOnCompletion || false,
+					})),
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
 					prompt: config.prompt || '',
@@ -747,43 +799,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			// Case 2: Launch auto-run immediately
 			if (config.launch) {
-				const folderPath = session.autoRunFolderPath;
-				if (!folderPath) {
-					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-						success: false,
-						error: 'No Auto Run folder configured for this session',
-					});
-					return;
-				}
-
-				const documents = (config.documents || []).map(
-					(doc: { filename: string; resetOnCompletion?: boolean }) => {
-						// Compute path relative to the session's autoRunFolderPath.
-						// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/subdir/temp.md")
-						// but the batch processor expects the path relative to folderPath without .md
-						// (e.g., "subdir/temp").
-						let name = doc.filename.replace(/\.md$/i, '');
-						// Normalize separators to forward slash for comparison
-						const normalized = name.replace(/\\/g, '/');
-						const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
-						// Case-insensitive prefix check for cross-platform compatibility (Windows drive letters)
-						const normalizedLower = normalized.toLowerCase();
-						const folderLower = normalizedFolder.toLowerCase();
-						if (normalizedFolder && normalizedLower.startsWith(folderLower + '/')) {
-							name = normalized.substring(normalizedFolder.length + 1);
-						} else {
-							// Fallback for paths not under folderPath: use basename only
-							const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-							if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-						}
-						return {
-							id: generateId(),
-							filename: name,
-							resetOnCompletion: doc.resetOnCompletion || false,
-							isDuplicate: false,
-						};
-					}
-				);
+				const folderPath = session.autoRunFolderPath as string;
+				const documents = folderRelativeDocuments.map((doc) => ({
+					id: generateId(),
+					filename: doc.filename,
+					resetOnCompletion: doc.resetOnCompletion || false,
+					isDuplicate: false,
+				}));
 
 				if (documents.length === 0) {
 					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {

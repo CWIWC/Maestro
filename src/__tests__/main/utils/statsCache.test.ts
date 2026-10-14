@@ -14,10 +14,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
+import fs from 'fs/promises';
 import {
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
+	STATS_CACHE_MIN_UPGRADABLE_VERSION,
 	PerProjectSessionStats,
+	loadStatsCache,
+	rescaleArchivedEntries,
 } from '../../../main/utils/statsCache';
 
 // Mock electron app module
@@ -589,5 +593,77 @@ describe('Regression Prevention', () => {
 		expect(updatedCache.totals.totalSessions).toBe(1);
 		expect(updatedCache.totals.totalMessages).toBe(500);
 		expect(updatedCache.totals.totalCostUsd).toBe(50.0);
+	});
+});
+
+describe('Derivation upgrades', () => {
+	const entry = (costUsd: number, tokens: number, archived = false): PerProjectSessionStats => ({
+		messages: 10,
+		costUsd,
+		sizeBytes: 100,
+		tokens,
+		oldestTimestamp: null,
+		fileMtimeMs: 1,
+		archived,
+	});
+
+	it('loads a cache that only differs in derivation instead of discarding its archived sessions', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({
+				version: STATS_CACHE_MIN_UPGRADABLE_VERSION,
+				sessions: { gone: entry(9, 90, true) },
+				totals: {},
+				lastUpdated: 0,
+			})
+		);
+		const cache = await loadStatsCache('/project');
+		expect(cache?.version).toBe(STATS_CACHE_MIN_UPGRADABLE_VERSION);
+		expect(cache?.sessions.gone.archived).toBe(true);
+	});
+
+	it('still discards a cache older than the upgradable floor', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({
+				version: STATS_CACHE_MIN_UPGRADABLE_VERSION - 1,
+				sessions: {},
+				totals: {},
+				lastUpdated: 0,
+			})
+		);
+		expect(await loadStatsCache('/project')).toBeNull();
+	});
+
+	it('rescales archived sessions by how far the fix moved the re-parsed ones', () => {
+		const before = { live: entry(30, 300), gone: entry(9, 90, true) };
+		// The re-parse brought the live session down to two thirds of its cost and
+		// half of its tokens.
+		const after = { live: entry(20, 150), gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens']);
+
+		expect(after.gone.costUsd).toBeCloseTo(6, 10);
+		expect(after.gone.tokens).toBeCloseTo(45, 10);
+		// Live entries are already re-derived and must not be touched.
+		expect(after.live).toEqual(entry(20, 150));
+	});
+
+	it('leaves archived sessions alone when no live session gives a baseline', () => {
+		const before = { gone: entry(9, 90, true) };
+		const after = { gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens']);
+
+		expect(after.gone).toEqual(entry(9, 90, true));
+	});
+
+	it('ignores entries that were never re-parsed when measuring the fix', () => {
+		const unchanged = entry(100, 1000);
+		const before = { live: entry(30, 300), stuck: unchanged, gone: entry(9, 90, true) };
+		const after = { live: entry(15, 150), stuck: unchanged, gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens']);
+
+		// Only `live` moved, by half; `stuck` (same object, parse failed) is no evidence.
+		expect(after.gone.costUsd).toBeCloseTo(4.5, 10);
 	});
 });

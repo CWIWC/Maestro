@@ -23,6 +23,7 @@ import {
 	snoozeTabCommand,
 	snoozeWake,
 } from './commands/snooze';
+import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -51,6 +52,7 @@ import { cueList } from './commands/cue-list';
 import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
+import { cueModel } from './commands/cue-model';
 import {
 	cuePipelineAdd,
 	cuePipelineExport,
@@ -115,6 +117,7 @@ import { supportPackage } from './commands/support-package';
 import {
 	feedbackAccounts,
 	feedbackAuth,
+	feedbackDiagnose,
 	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
@@ -133,6 +136,7 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
+import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -552,6 +556,33 @@ queue
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
 
+// Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
+// agent and on a group) and the matching Cmd+K commands. Answered by the primary
+// window through the same code path as a click.
+const windowCmd = program
+	.command('window')
+	.description('List Maestro windows, and move agents or whole groups between them');
+
+windowCmd
+	.command('list')
+	.description('List open windows and the agents each one holds')
+	.option('--json', 'Output as JSON')
+	.action(windowList);
+
+windowCmd
+	.command('move-agent <agent-id>')
+	.description('Move an agent (with its worktrees) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveAgent);
+
+windowCmd
+	.command('move-group <group-id>')
+	.description('Move every agent in a group (with subgroups when nesting is on) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveGroup);
+
 // Snooze commands - the CLI half of the Snooze dialog (Opt+Cmd+S), the Snoozed
 // Tabs list, and its history log. `<when>` takes the same expressions the dialog
 // does ("2h", "tomorrow", "next fri 3pm", "aug 5"), parsed locally so a typo
@@ -711,7 +742,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -965,6 +996,41 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((folder, options) => autoRunFolder(options.agent, folder, options));
 
+// Steering commands - the CLI half of the Thought Stream's Steer Auto Run bar.
+// A note parks until the run dispatches its next task, then opens that task's
+// prompt. Named for Auto Run because "steering" also means typing into a live
+// chat turn, which is a different mechanism with no CLI verb here.
+const steerAutoRun = program
+	.command('steer-auto-run')
+	.description('Course-correct a running Auto Run without stopping it');
+
+steerAutoRun
+	.command('send <note>')
+	.description('Send a steering note; it is delivered at the start of the next task')
+	.requiredOption('-a, --agent <id>', 'Agent whose Auto Run to steer')
+	.option('--background', 'Queue it without flashing the "Steering note queued" confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored note as JSON')
+	.action(steerAutoRunSend);
+
+steerAutoRun
+	.command('list')
+	.description('Show the notes still waiting, and each delivered note with its task reply')
+	.requiredOption('-a, --agent <id>', 'Agent whose steering notes to read')
+	.option('--background', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: reading the notes changes nothing on screen')
+	.option('--json', 'Output as JSON, including each full reply')
+	.action(steerAutoRunList);
+
+steerAutoRun
+	.command('cancel <note-id>')
+	.description('Take back a note no task has read yet (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent that holds the note')
+	.option('--background', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
+	.option('--json', 'Output the cancelled note as JSON')
+	.action(steerAutoRunCancel);
+
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
 	.command('marketplace')
@@ -1016,6 +1082,22 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+// Read or change the model one subscription runs on. No setting flag = read.
+// Works with the desktop app closed; the engine's YAML watcher picks it up.
+cue
+	.command('model <subscription-name>')
+	.description(
+		'Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)'
+	)
+	.option('-a, --agent <id-or-name>', 'Scope to one agent (required when the name exists on two)')
+	.option('--tier <level>', 'Model tier: low, medium, high (mapped per provider)')
+	.option('--model <id>', 'Exact model id (instead of --tier)')
+	.option('--effort <level>', 'Effort: low, medium, high (mapped per provider)')
+	.option('--clear-model', "Remove the tier / model and use the agent's own model")
+	.option('--clear-effort', "Remove the effort and use the agent's own effort")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueModel);
 
 cue
 	.command('enable <subscription>')
@@ -1069,6 +1151,12 @@ cue
 	.option('-l, --label <text>', 'Human-readable label (defaults to truncated prompt)')
 	.option('--pipeline <name>', 'Pipeline name (default: Tasks)')
 	.option('--grace-minutes <n>', 'Override the default 360-minute grace window')
+	.option(
+		'--tier <level>',
+		'Model tier for the prompt run: low, medium, high (mapped per provider)'
+	)
+	.option('--model <id>', 'Exact model id for the prompt run (instead of --tier)')
+	.option('--effort <level>', 'Effort for the prompt run: low, medium, high (mapped per provider)')
 	.option(
 		'--keep-on-failure',
 		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
@@ -2319,6 +2407,14 @@ feedback
 	.option('--clear', 'Forget the remembered account and pick automatically again')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAccounts);
+
+feedback
+	.command('diagnose')
+	.description(
+		'Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackDiagnose);
 
 feedback
 	.command('search <query>')

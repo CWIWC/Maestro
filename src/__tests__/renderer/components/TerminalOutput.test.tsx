@@ -3218,9 +3218,15 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Header pill still renders, body goes through the markdown stack
-			// (react-markdown is mocked to a div with this testid).
+			// Collapsed by default: only the first line shows, as plain text.
 			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			expect(screen.getByText(/## Step 1/)).toBeInTheDocument();
+			expect(screen.queryByText(/what moved/)).not.toBeInTheDocument();
+
+			// Clicking the header expands the body through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			fireEvent.click(screen.getByText('/archive-playbooks:'));
 			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
 		});
 
@@ -3246,6 +3252,7 @@ describe('TerminalOutput', () => {
 
 			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
+			fireEvent.click(screen.getByText('/pr-review:'));
 
 			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
 

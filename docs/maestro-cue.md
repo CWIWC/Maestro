@@ -372,3 +372,4 @@ Filter by CUE entries in the History panel or in Director's Notes (when both Enc
 - **Prompt files vs inline** - For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
 - **Hot reload** - The engine watches `.maestro/cue.yaml` for changes and reloads automatically - no need to restart Maestro
 - **Template variables** - Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it
+- **Standing instructions** - Every Cue run starts a new provider session, so the target agent's New Session Message is prefixed to each run's prompt. Its Nudge Message is not sent. See [When Each Message Is Sent](./general-usage#when-each-message-is-sent)

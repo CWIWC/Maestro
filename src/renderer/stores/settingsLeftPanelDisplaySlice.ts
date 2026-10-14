@@ -18,6 +18,7 @@ export interface LeftPanelDisplayState {
 	showWorktreeBranchName: boolean;
 	showStarredSessionsSection: boolean;
 	showLeftPanelGroupMemberCount: boolean;
+	showLeftPanelCollapsedInitials: boolean;
 	leftPanelCollapsedPillsPerRow: number;
 	showLeftPanelLocationPills: boolean;
 	showLeftPanelGitIndicator: boolean;
@@ -36,6 +37,7 @@ export interface LeftPanelDisplayActions {
 	setShowWorktreeBranchName: (value: boolean) => void;
 	setShowStarredSessionsSection: (value: boolean) => void;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
 	setShowLeftPanelGitIndicator: (value: boolean) => void;
@@ -61,6 +63,7 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	showWorktreeBranchName: false,
 	showStarredSessionsSection: true,
 	showLeftPanelGroupMemberCount: false,
+	showLeftPanelCollapsedInitials: true,
 	leftPanelCollapsedPillsPerRow: 20,
 	showLeftPanelLocationPills: true,
 	showLeftPanelGitIndicator: true,
@@ -107,6 +110,11 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	setShowLeftPanelGroupMemberCount: (value) => {
 		set({ showLeftPanelGroupMemberCount: value });
 		window.maestro.settings.set('showLeftPanelGroupMemberCount', value);
+	},
+
+	setShowLeftPanelCollapsedInitials: (value) => {
+		set({ showLeftPanelCollapsedInitials: value });
+		window.maestro.settings.set('showLeftPanelCollapsedInitials', value);
 	},
 
 	setLeftPanelCollapsedPillsPerRow: (value) => {
@@ -174,6 +182,9 @@ export function hydrateLeftPanelDisplaySettings(
 
 	if (allSettings['showLeftPanelGroupMemberCount'] !== undefined)
 		patch.showLeftPanelGroupMemberCount = allSettings['showLeftPanelGroupMemberCount'] as boolean;
+
+	if (allSettings['showLeftPanelCollapsedInitials'] !== undefined)
+		patch.showLeftPanelCollapsedInitials = allSettings['showLeftPanelCollapsedInitials'] as boolean;
 
 	if (allSettings['leftPanelCollapsedPillsPerRow'] !== undefined) {
 		const perRow = allSettings['leftPanelCollapsedPillsPerRow'] as number;

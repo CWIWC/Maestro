@@ -80,6 +80,7 @@ describe('DisplayTab section components', () => {
 		const setters = {
 			setShowStarredSessionsSection: vi.fn(),
 			setShowLeftPanelGroupMemberCount: vi.fn(),
+			setShowLeftPanelCollapsedInitials: vi.fn(),
 			setLeftPanelCollapsedPillsPerRow: vi.fn(),
 			setShowLeftPanelLocationPills: vi.fn(),
 			setShowLeftPanelGitIndicator: vi.fn(),
@@ -97,6 +98,7 @@ describe('DisplayTab section components', () => {
 				maestroCueEnabled={false}
 				showStarredSessionsSection={true}
 				showLeftPanelGroupMemberCount={false}
+				showLeftPanelCollapsedInitials={true}
 				leftPanelCollapsedPillsPerRow={15}
 				showLeftPanelLocationPills={true}
 				showLeftPanelGitIndicator={false}
@@ -119,6 +121,9 @@ describe('DisplayTab section components', () => {
 		);
 		fireEvent.click(
 			screen.getByRole('switch', { name: 'Show group member count in left side bar' })
+		);
+		fireEvent.click(
+			screen.getByRole('switch', { name: 'Show agent initials in collapsed left side bar' })
 		);
 		fireEvent.change(screen.getByRole('slider', { name: 'Collapsed group pills per row' }), {
 			target: { value: '25' },
@@ -151,6 +156,7 @@ describe('DisplayTab section components', () => {
 
 		expect(setters.setShowStarredSessionsSection).toHaveBeenCalledWith(false);
 		expect(setters.setShowLeftPanelGroupMemberCount).toHaveBeenCalledWith(true);
+		expect(setters.setShowLeftPanelCollapsedInitials).toHaveBeenCalledWith(false);
 		expect(setters.setLeftPanelCollapsedPillsPerRow).toHaveBeenCalledWith(25);
 		expect(setters.setShowLeftPanelLocationPills).toHaveBeenCalledWith(false);
 		expect(setters.setShowLeftPanelGitIndicator).toHaveBeenCalledWith(true);
@@ -168,6 +174,8 @@ describe('DisplayTab section components', () => {
 			setShowStarredSessionsSection: vi.fn(),
 			showLeftPanelGroupMemberCount: false,
 			setShowLeftPanelGroupMemberCount: vi.fn(),
+			showLeftPanelCollapsedInitials: true,
+			setShowLeftPanelCollapsedInitials: vi.fn(),
 			leftPanelCollapsedPillsPerRow: 15,
 			setLeftPanelCollapsedPillsPerRow: vi.fn(),
 			showLeftPanelLocationPills: true,

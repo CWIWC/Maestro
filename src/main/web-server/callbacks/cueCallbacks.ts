@@ -3,6 +3,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
+import { cueTurnSettingsOf } from '../../../shared/cue/turn-settings';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -88,6 +89,7 @@ export function registerCueCallbacks(
 					// numeric fields zero so the CLI renders "never triggered"
 					// rather than fabricating a value.
 					triggerCount: 0,
+					...cueTurnSettingsOf(sub),
 				});
 			}
 		}

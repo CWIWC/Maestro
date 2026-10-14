@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Session, Group, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
 import { hasNoClaudeProviderSession } from '../SessionItem';
@@ -12,6 +12,16 @@ import {
 import { CornerDot } from '../ui/CornerDot';
 import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
 import { useConsultedSessionIds } from '../../stores/crossAgentInFlightStore';
+import { buildAgentInitials } from '../../../shared/agentInitials';
+import { readableTextOn, transparentize } from '../../../shared/colorContrast';
+
+/**
+ * How much of the status color the initials badge is filled with. The active
+ * agent gets the heavier fill plus a ring, which is what the 100% vs 25% dot
+ * opacity says in dot mode.
+ */
+const INITIALS_FILL_ACTIVE = 0.34;
+const INITIALS_FILL_INACTIVE = 0.16;
 
 interface SkinnySidebarProps {
 	theme: Theme;
@@ -27,6 +37,8 @@ interface SkinnySidebarProps {
 	showUnreadAgentsOnly: boolean;
 	/** Comma-joined signature of agents stuck auto-retrying an outage. */
 	stuckOutageSignature: string;
+	/** Draw each agent as a two-letter badge instead of a bare status dot. */
+	showInitials: boolean;
 }
 
 export const SkinnySidebar = memo(function SkinnySidebar({
@@ -42,6 +54,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	handleContextMenu,
 	showUnreadAgentsOnly,
 	stuckOutageSignature,
+	showInitials,
 }: SkinnySidebarProps) {
 	const consultedSessionIds = useConsultedSessionIds();
 	const attentionCtx: AttentionContext = {
@@ -53,6 +66,12 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 				(s) => s.id === activeSessionId || sessionNeedsAttention(s, attentionCtx)
 			)
 		: sortedSessions;
+	// Labels come from the WHOLE list, not the filtered one, so toggling the
+	// unread filter cannot rename an agent the user has already learned.
+	const initialsById = useMemo(
+		() => (showInitials ? buildAgentInitials(sortedSessions) : null),
+		[showInitials, sortedSessions]
+	);
 
 	return (
 		<div className="flex-1 min-h-0 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
@@ -76,6 +95,24 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 						? undefined
 						: getStatusColor(session.state, theme);
 				const shouldPulse = session.state === 'busy' || isBusyOffState;
+				const isActive = activeSessionId === session.id;
+				// Hollow means "no provider session yet": an outline, never a fill.
+				const isHollow = isUnboundClaude && !isBusyOffState;
+				const statusTitle = isConsulted
+					? 'Answering a consult'
+					: isUnboundClaude
+						? 'No active Claude session'
+						: undefined;
+				const initials = initialsById?.get(session.id);
+				const unreadDot = !isActive && hasUnreadTabs && (
+					<CornerDot color={theme.colors.error} title="Unread messages" />
+				);
+				const badgeColor = effectiveStatusColor ?? theme.colors.textDim;
+				const badgeFill = transparentize(
+					badgeColor,
+					theme.colors.bgSidebar,
+					isActive ? INITIALS_FILL_ACTIVE : INITIALS_FILL_INACTIVE
+				);
 
 				return (
 					<div
@@ -91,34 +128,66 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								setActiveSessionId(session.id);
 							}
 						}}
-						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all outline-none ${activeSessionId === session.id ? '' : 'hover:bg-white/10'}`}
+						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all outline-none ${isActive ? '' : 'hover:bg-white/10'}`}
 					>
-						<div className="relative">
+						{initials ? (
 							<div
-								className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
-								style={{
-									opacity: activeSessionId === session.id ? 1 : 0.25,
-									...(isUnboundClaude && !isBusyOffState
-										? {
-												border: `1.5px solid ${theme.colors.textDim}`,
-												backgroundColor: 'transparent',
-											}
-										: {
-												backgroundColor: effectiveStatusColor,
-											}),
-								}}
-								title={
-									isConsulted
-										? 'Answering a consult'
-										: isUnboundClaude
-											? 'No active Claude session'
-											: undefined
-								}
-							/>
-							{activeSessionId !== session.id && hasUnreadTabs && (
-								<CornerDot color={theme.colors.error} title="Unread messages" />
-							)}
-						</div>
+								className="relative w-8 h-8 flex items-center justify-center"
+								title={statusTitle}
+								data-testid="skinny-initials-badge"
+							>
+								{/* The fill is its own layer so a busy agent pulses its
+								    background while the letters stay readable. */}
+								<div
+									className={`absolute inset-0 rounded-full transition-[filter] ${isActive ? '' : 'group-hover:brightness-125'} ${shouldPulse ? 'animate-pulse' : ''}`}
+									style={
+										isHollow
+											? {
+													border: `1.5px solid ${theme.colors.textDim}`,
+													backgroundColor: 'transparent',
+													opacity: isActive ? 1 : 0.6,
+												}
+											: {
+													backgroundColor: badgeFill,
+													border: `1.5px solid ${isActive ? badgeColor : 'transparent'}`,
+												}
+									}
+									data-testid="skinny-initials-fill"
+								/>
+								<span
+									className="relative text-xs-plus font-semibold leading-none tracking-tight select-none"
+									style={{
+										color: isHollow
+											? theme.colors.textDim
+											: readableTextOn(badgeColor, [badgeFill]),
+										opacity: isActive ? 1 : 0.8,
+									}}
+									aria-hidden
+								>
+									{initials}
+								</span>
+								{unreadDot}
+							</div>
+						) : (
+							<div className="relative">
+								<div
+									className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
+									style={{
+										opacity: isActive ? 1 : 0.25,
+										...(isHollow
+											? {
+													border: `1.5px solid ${theme.colors.textDim}`,
+													backgroundColor: 'transparent',
+												}
+											: {
+													backgroundColor: effectiveStatusColor,
+												}),
+									}}
+									title={statusTitle}
+								/>
+								{unreadDot}
+							</div>
+						)}
 
 						{/* Hover Tooltip for Skinny Mode */}
 						<div

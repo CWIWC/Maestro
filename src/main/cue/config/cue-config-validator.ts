@@ -9,6 +9,7 @@ import {
 	type CueScheduleDay,
 	normalizeWebhookPath,
 } from '../../../shared/cue';
+import { TIER_LEVELS, asTierLevel } from '../../../shared/modelTiers';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
@@ -232,6 +233,7 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	validateEventSpecificFields(subRecord, prefix, errors);
+	validateTurnSettings(subRecord, prefix, errors);
 
 	if (subRecord.fan_in_timeout_minutes !== undefined) {
 		// Same bounds as `settings.timeout_minutes`. A value of `0` makes
@@ -275,6 +277,41 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	return errors;
+}
+
+/**
+ * `tier` / `model` / `effort` pick the model an agent run uses. A typo here is
+ * an error rather than a silent fallback: the run would otherwise happen on
+ * the agent's default model while the YAML claims the top tier.
+ */
+function validateTurnSettings(
+	subRecord: Record<string, unknown>,
+	prefix: string,
+	errors: string[]
+): void {
+	const levels = TIER_LEVELS.join(', ');
+	if (subRecord.tier !== undefined && !asTierLevel(subRecord.tier)) {
+		errors.push(`${prefix}: "tier" must be one of: ${levels}`);
+	}
+	if (subRecord.effort !== undefined && !asTierLevel(subRecord.effort)) {
+		errors.push(`${prefix}: "effort" must be one of: ${levels}`);
+	}
+	if (
+		subRecord.model !== undefined &&
+		(typeof subRecord.model !== 'string' || subRecord.model.trim().length === 0)
+	) {
+		errors.push(`${prefix}: "model" must be a non-empty string when provided`);
+	}
+	if (subRecord.tier !== undefined && subRecord.model !== undefined) {
+		errors.push(`${prefix}: set "tier" or "model", not both`);
+	}
+	const hasAny =
+		subRecord.tier !== undefined || subRecord.model !== undefined || subRecord.effort !== undefined;
+	if (hasAny && (subRecord.action === 'command' || subRecord.action === 'notify')) {
+		errors.push(
+			`${prefix}: "tier", "model", and "effort" apply to agent runs and are not supported when action is "${subRecord.action}"`
+		);
+	}
 }
 
 function validateEventSpecificFields(

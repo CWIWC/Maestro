@@ -47,6 +47,21 @@ vi.mock('../../main/utils/pricing', () => {
 	};
 });
 
+// Session usage now goes through the shared subagent-aware helper. Delegate to
+// the mocked pricing above so the cost assertions keep one formula, and report
+// no subagents (that module is covered by shared/claudeSessionUsage.test.ts).
+vi.mock('../../shared/claudeSessionUsage', async () => {
+	const { computeClaudeUsageCost } = await import('../../main/utils/pricing');
+	const price = (content: string, subagents: readonly string[] = []) =>
+		computeClaudeUsageCost(subagents.length ? [content, ...subagents].join('\n') : content);
+	return {
+		readClaudeSubagentTranscripts: vi.fn(async () => []),
+		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		computeClaudeUsageWithSubagents: vi.fn(price),
+		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
+	};
+});
+
 vi.mock('../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 }));

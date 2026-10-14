@@ -21,6 +21,8 @@ export interface LocalInteractiveSpawnResult {
 	commandToSpawn: string;
 	argsToSpawn: string[];
 	customEnvVarsToPass: Record<string, string> | undefined;
+	/** The real claude binary maestro-p drives; set only when this turn runs through maestro-p. */
+	claudeBinPath?: string;
 }
 
 /**
@@ -89,5 +91,6 @@ export function applyLocalInteractiveSpawnDecision(
 		commandToSpawn: applied.command,
 		argsToSpawn: applied.args,
 		customEnvVarsToPass: applied.customEnvVars,
+		claudeBinPath: claudeCommandForInteractive,
 	};
 }

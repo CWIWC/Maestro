@@ -18,6 +18,7 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 } from '../../shared/history';
+import { resolveSyncDir } from '../../shared/syncPath';
 
 // Get the Maestro config directory path
 export function getConfigDir(): string {
@@ -39,11 +40,37 @@ export function getConfigDir(): string {
 }
 
 /**
+ * The directory the desktop keeps its SYNCED stores in: the custom Storage
+ * Location when one is set (Settings -> General), else the config directory.
+ * Agents, groups, settings and pasted images live here; history, playbooks,
+ * agent configs and the CLI server discovery file stay in the config directory
+ * on every machine.
+ */
+export function getSyncDir(): string {
+	return resolveSyncDir(getConfigDir());
+}
+
+/**
+ * Store files the desktop opens under the sync directory. Must match the
+ * stores `initializeStores()` (src/main/stores/instances.ts) gives
+ * `cwd: _syncPath`; anything not listed is read from the config directory.
+ */
+const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
+	'maestro-sessions.json',
+	'maestro-groups.json',
+	'maestro-settings.json',
+]);
+
+function getStoreFileDir(filename: string): string {
+	return SYNCED_STORE_FILES.has(filename) ? getSyncDir() : getConfigDir();
+}
+
+/**
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getConfigDir(), filename);
+	const filePath = path.join(getStoreFileDir(filename), filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -61,7 +88,7 @@ function readStoreFile<T>(filename: string): T | undefined {
  * Creates the file (and parent directory) if it doesn't exist.
  */
 function writeStoreFile<T>(filename: string, data: T): void {
-	const dirPath = getConfigDir();
+	const dirPath = getStoreFileDir(filename);
 	if (!fs.existsSync(dirPath)) {
 		fs.mkdirSync(dirPath, { recursive: true });
 	}

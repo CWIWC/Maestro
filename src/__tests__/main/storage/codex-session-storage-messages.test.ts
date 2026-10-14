@@ -43,6 +43,8 @@ vi.mock('fs/promises', () => ({
 
 import fs from 'fs/promises';
 import { CodexSessionStorage } from '../../../main/storage/codex-session-storage';
+import { readDirRemote, readFileRemote, statRemote } from '../../../main/utils/remote-fs';
+import type { SshRemoteConfig } from '../../../shared/types';
 
 /**
  * Create a realistic Codex v0.111.0 session JSONL content
@@ -148,6 +150,43 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 	beforeEach(() => {
 		storage = new CodexSessionStorage();
 		vi.clearAllMocks();
+	});
+
+	it.each([
+		[undefined, '~/.codex/sessions'],
+		['~/.codex-work/', '~/.codex-work/sessions'],
+		['$HOME/codex-work', '$HOME/codex-work/sessions'],
+		['/srv/account with spaces', '/srv/account with spaces/sessions'],
+	])('reads remote rollouts under the selected account %s', async (accountDir, sessionsDir) => {
+		const sshConfig: SshRemoteConfig = {
+			id: 'remote',
+			name: 'Remote',
+			host: 'example.test',
+			port: 22,
+			username: 'test',
+			privateKeyPath: '',
+			enabled: true,
+			useSshConfig: false,
+		};
+		const sessionId = '019ccb6c-c0fd-7b70-92b7-558f514099c6';
+		const filename = `rollout-2026-03-08T03-10-28-${sessionId}.jsonl`;
+		vi.mocked(readDirRemote)
+			.mockResolvedValueOnce({ success: true, data: [{ name: '2026', isDirectory: true }] })
+			.mockResolvedValueOnce({ success: true, data: [{ name: '03', isDirectory: true }] })
+			.mockResolvedValueOnce({ success: true, data: [{ name: '08', isDirectory: true }] })
+			.mockResolvedValueOnce({ success: true, data: [{ name: filename, isDirectory: false }] });
+		vi.mocked(statRemote).mockResolvedValue({
+			success: true,
+			data: { size: 200, mtime: Date.now(), isDirectory: false },
+		});
+		vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: createSessionContent() });
+
+		const [listed] = await storage.listSessions('C:\\Users\\test\\project', sshConfig, accountDir);
+		expect(listed?.sessionId).toBe(sessionId);
+		expect(readDirRemote).toHaveBeenCalledWith(sessionsDir, sshConfig);
+		expect(readDirRemote).toHaveBeenCalledWith(`${sessionsDir}/2026/03/08`, sshConfig);
+		expect(readFileRemote).toHaveBeenCalledWith(`${sessionsDir}/2026/03/08/${filename}`, sshConfig);
+		expect(fs.readdir).not.toHaveBeenCalled();
 	});
 
 	it('should parse function_call entries with toolUse', async () => {

@@ -10,9 +10,9 @@
  * API" instead of "claude-code".
  */
 
+import type { CSSProperties } from 'react';
 import type { Session } from '../../types';
 import { AGENT_DISPLAY_NAMES } from '../../../shared/agentMetadata';
-import { widestLabelWidth } from '../../utils/labelWidth';
 
 // `clampTooltipToViewport` was relocated into the shared widget library (so the
 // library's ChartTooltip primitive owns its geometry without depending back on
@@ -218,26 +218,36 @@ export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<numbe
 }
 
 /**
- * Width, in px, of the name column in the dashboard's horizontal bar charts
- * (Agent Efficiency, Agent Comparison, By Agent Type). Sized to the longest
- * label so "Claude Code (Worktree)" reads in full instead of clipping at a
- * fixed 112px while the bar beside it has room to spare. Labels render at
- * `text-sm`; `withSwatch` counts the color square and its gap. The ceiling
- * keeps one long user-assigned agent name from eating the bars; past it the
- * label ellipsizes and the row's `title` carries the full name.
+ * Layout for the dashboard's horizontal bar charts (Agent Efficiency, Agent
+ * Comparison, By Agent Type, the token cost breakdowns): one CSS grid whose
+ * first column is the name, second the bar, third the trailing value.
+ *
+ * The name column is sized by the browser to the widest label it actually
+ * renders (`fit-content`), so every label reads in full and every bar starts
+ * at the same x. The bar column takes what is left. This replaced a per-chart
+ * width ESTIMATED from character count, which came out short of the real text
+ * ("Claude Co..." beside a bar with hundreds of spare pixels) and could never
+ * account for the user's font or zoom. The 50% ceiling keeps one pathological
+ * user-assigned agent name from erasing the bars; past it the label ellipsizes
+ * and the row's `title` carries the full name.
+ *
+ * Each row spreads `BAR_CHART_ROW_STYLE` so it stays one box (hover, click,
+ * focus, role all still live on the row) while its three children sit in the
+ * parent's shared columns via subgrid. The trailing column is shared too, so
+ * a row with a longer value does not shorten its own bar.
  */
-export function barChartLabelWidth(
-	labels: Iterable<string>,
-	{ withSwatch = false }: { withSwatch?: boolean } = {}
-): number {
-	return widestLabelWidth(labels, {
-		fontSizePx: 14,
-		// w-2.5 swatch (10px) + gap-2 (8px)
-		chromePx: withSwatch ? 18 : 0,
-		minPx: 112,
-		maxPx: 320,
-	});
-}
+export const BAR_CHART_GRID_CLASS = 'grid gap-x-3 gap-y-2';
+
+export const BAR_CHART_GRID_STYLE: CSSProperties = {
+	gridTemplateColumns: 'fit-content(50%) minmax(0, 1fr) auto',
+};
+
+export const BAR_CHART_ROW_STYLE: CSSProperties = {
+	display: 'grid',
+	gridTemplateColumns: 'subgrid',
+	gridColumn: '1 / -1',
+	alignItems: 'center',
+};
 
 /**
  * Geometry shared by the dashboard's donut charts (Activity Source, Session

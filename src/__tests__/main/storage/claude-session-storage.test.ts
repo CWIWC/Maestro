@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'fs/promises';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
 import { captureException } from '../../../main/utils/sentry';
+import { listDirWithStatsRemote } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
@@ -370,6 +371,36 @@ describe('ClaudeSessionStorage', () => {
 			expect(storage.agentId).toBe('claude-code');
 		});
 	});
+
+	it.each([
+		[undefined, '~/.claude/projects'],
+		['~/.claude-work/', '~/.claude-work/projects'],
+		['$HOME/claude-work', '$HOME/claude-work/projects'],
+		['/srv/account with spaces', '/srv/account with spaces/projects'],
+	])(
+		'lists the remote account directory %s without local expansion',
+		async (configDir, projectsDir) => {
+			const sshConfig: SshRemoteConfig = {
+				id: 'remote',
+				name: 'Remote',
+				host: 'example.test',
+				port: 22,
+				username: 'test',
+				privateKeyPath: '',
+				enabled: true,
+				useSshConfig: false,
+			};
+			vi.mocked(listDirWithStatsRemote).mockResolvedValue({ success: true, data: [] });
+
+			expect(await storage.listSessions('/remote/project', sshConfig, configDir)).toEqual([]);
+			expect(listDirWithStatsRemote).toHaveBeenCalledWith(
+				`${projectsDir}/-remote-project`,
+				sshConfig,
+				{ nameSuffix: '.jsonl' }
+			);
+			expect(fs.readdir).not.toHaveBeenCalled();
+		}
+	);
 
 	describe('Edge Cases', () => {
 		it('should handle special characters in project path', () => {

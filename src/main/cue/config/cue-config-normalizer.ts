@@ -17,6 +17,7 @@ import {
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
 } from '../../../shared/cue';
+import { asTierLevel } from '../../../shared/modelTiers';
 
 export interface PromptSpec {
 	inline?: string;
@@ -399,6 +400,11 @@ function normalizeSubscription(
 			sub.forward_output_from.every((value: unknown) => typeof value === 'string')
 				? (sub.forward_output_from as string[])
 				: undefined,
+		// The run's model choice. Dropping these here would silently run every
+		// subscription on the agent's default model while the YAML says otherwise.
+		tier: asTierLevel(sub.tier),
+		model: typeof sub.model === 'string' && sub.model.trim() ? sub.model.trim() : undefined,
+		effort: asTierLevel(sub.effort),
 		cli_output:
 			typeof sub.cli_output === 'object' &&
 			sub.cli_output !== null &&

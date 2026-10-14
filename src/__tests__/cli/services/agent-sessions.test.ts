@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { listClaudeSessions } from '../../../cli/services/agent-sessions';
+import { readClaudeSubagentTranscriptsSync } from '../../../shared/claudeSessionUsage';
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -17,6 +18,14 @@ vi.mock('fs', () => ({
 	readdirSync: vi.fn(),
 	readFileSync: vi.fn(),
 	statSync: vi.fn(),
+}));
+
+// The fs mock above answers every readdirSync with the session listing, which
+// would hand the session files back as their own "subagents". Subagent reads are
+// stubbed instead and driven per test.
+vi.mock('../../../shared/claudeSessionUsage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/claudeSessionUsage')>()),
+	readClaudeSubagentTranscriptsSync: vi.fn(() => []),
 }));
 
 // Mock os
@@ -475,5 +484,27 @@ describe('listClaudeSessions', () => {
 		expect(session.cacheCreationTokens).toBe(100);
 		expect(session.costUsd).toBeGreaterThan(0);
 		expect(session.durationSeconds).toBe(5);
+	});
+
+	it("prices a session's subagent transcripts into its cost and tokens", () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-sub.jsonl' as unknown as fs.Dirent]);
+		vi.mocked(fs.statSync).mockReturnValue({ size: 1000, mtimeMs: Date.now() } as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			if (p.toString().includes('session-sub.jsonl')) {
+				return makeJsonlContent({ userMessage: 'Go', inputTokens: 1000, outputTokens: 0 });
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+		vi.mocked(readClaudeSubagentTranscriptsSync).mockReturnValueOnce([
+			makeJsonlContent({ inputTokens: 3000, outputTokens: 0 }),
+		]);
+
+		const [session] = listClaudeSessions(projectPath).sessions;
+
+		expect(readClaudeSubagentTranscriptsSync).toHaveBeenCalledWith(
+			path.join(sessionsDir, 'session-sub.jsonl')
+		);
+		expect(session.inputTokens).toBe(4000);
 	});
 });

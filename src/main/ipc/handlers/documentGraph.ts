@@ -3,7 +3,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
-import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
+import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreDotfilesUnder } from '../../utils/watcher-ignore';
 
 const LOG_CONTEXT = '[DocumentGraph]';
 
@@ -144,7 +144,7 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 			// Create file watcher using chokidar (cross-platform)
 			const watcher = chokidar.watch(rootPath, {
 				ignored: [
-					/(^|[/\\])\../, // Ignore dotfiles
+					ignoreDotfilesUnder(rootPath), // Ignore dotfiles below the root, not above it
 					/node_modules/,
 					/dist/,
 					/build/,

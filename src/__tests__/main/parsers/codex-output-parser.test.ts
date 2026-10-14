@@ -268,6 +268,23 @@ describe('CodexOutputParser', () => {
 				expect(event?.type).toBe('error');
 				expect(event?.text).toBe('Model not found');
 			});
+
+			it('reads the text of a bare exec-JSON error event from its message', () => {
+				// `codex exec --json` reports an API failure as
+				// {"type":"error","message":"..."} with no `error` field. It used to
+				// parse as "Unknown error", and the CLI keeps the first error text of
+				// a turn, so that is what a failed task reported.
+				const line = JSON.stringify({
+					type: 'error',
+					message: '{"error":{"message":"Unsupported value","param":"reasoning.effort"}}',
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('error');
+				expect(event?.text).toBe(
+					'{"error":{"message":"Unsupported value","param":"reasoning.effort"}}'
+				);
+			});
 		});
 
 		describe('turn.failed events', () => {

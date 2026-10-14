@@ -8,11 +8,14 @@ import { readSettingValue } from '../services/storage';
 import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
 
 // Feature ID -> display name. Keys mirror EncoreFeatureFlags in
-// src/shared/encoreFeatures.ts. Aliases let an agent say "group chat" or "cue".
+// src/shared/encoreFeatures.ts. Aliases let an agent say "symphony" or "cue".
+// Group Chat is a core feature with no Encore flag, so it has no alias here:
+// mapping it to Symphony once made `encore disable group-chat` turn off the
+// wrong feature.
 const FEATURES: Record<string, string> = {
 	directorNotes: "Director's Notes",
 	usageStats: 'Usage Dashboard',
-	symphony: 'Symphony (Group Chat)',
+	symphony: 'Maestro Symphony',
 	maestroCue: 'Maestro Cue',
 	pianola: 'Pianola (Manager Agent)',
 };
@@ -26,8 +29,7 @@ const ALIASES: Record<string, string> = {
 	usage: 'usageStats',
 	stats: 'usageStats',
 	dashboard: 'usageStats',
-	'group-chat': 'symphony',
-	groupchat: 'symphony',
+	'maestro-symphony': 'symphony',
 	cue: 'maestroCue',
 	maestrocue: 'maestroCue',
 	'auto-pilot': 'pianola',

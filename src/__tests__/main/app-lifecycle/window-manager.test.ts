@@ -254,6 +254,14 @@ vi.mock('../../../main/maestro-cli-manager', () => ({
 	resolveBundledCliPathSync: vi.fn(() => '/resolved/maestro-cli.js'),
 }));
 
+// Linux window icon resolution (fs + platform) is covered by app-icon.test.ts.
+const { mockResolveLinuxWindowIconPath } = vi.hoisted(() => ({
+	mockResolveLinuxWindowIconPath: vi.fn((): string | undefined => undefined),
+}));
+vi.mock('../../../main/app-lifecycle/app-icon', () => ({
+	resolveLinuxWindowIconPath: mockResolveLinuxWindowIconPath,
+}));
+
 // Mock electron-devtools-installer (for development mode)
 vi.mock('electron-devtools-installer', () => ({
 	default: vi.fn().mockResolvedValue('React DevTools'),
@@ -1636,6 +1644,47 @@ describe('app-lifecycle/window-manager', () => {
 			windowManager.createWindow();
 
 			expect(lastBrowserWindowOptions).toHaveProperty('autoHideMenuBar', true);
+		});
+
+		it('should set the window icon when a Linux icon resolves', async () => {
+			mockResolveLinuxWindowIconPath.mockReturnValueOnce('/opt/Maestro/resources/icon.png');
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions).toHaveProperty('icon', '/opt/Maestro/resources/icon.png');
+		});
+
+		it('should omit the window icon when no Linux icon resolves', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions).not.toHaveProperty('icon');
 		});
 
 		it('should allow clipboard permissions and deny all others', async () => {

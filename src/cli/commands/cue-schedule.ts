@@ -43,6 +43,7 @@ import {
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
 import type { CueScheduleDay } from '../../shared/cue/contracts';
+import { formatCueTurnSettings, parseCueTurnSettingsInput } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
 
 export interface CueScheduleOptions {
@@ -67,6 +68,9 @@ export interface CueScheduleOptions {
 	pipeline?: string;
 	graceMinutes?: string;
 	keepOnFailure?: boolean;
+	tier?: string;
+	model?: string;
+	effort?: string;
 	json?: boolean;
 }
 
@@ -162,6 +166,9 @@ interface ScheduledTaskRow {
 	project_root: string;
 	action: string;
 	label: string;
+	tier: string;
+	model: string;
+	effort: string;
 }
 
 function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
@@ -179,6 +186,9 @@ function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
 		project_root: task.projectRoot,
 		action: task.action,
 		label: task.label,
+		tier: task.tier ?? '',
+		model: task.model ?? '',
+		effort: task.effort ?? '',
 	};
 }
 
@@ -552,6 +562,13 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		errorOut('--sticky requires --notify', options, 'STICKY_WITHOUT_NOTIFY');
 	}
 
+	const turnInput = parseCueTurnSettingsInput(options);
+	if (!turnInput.ok) errorOut(turnInput.error, options, turnInput.code);
+	const { tier, model, effort } = turnInput.settings;
+	if ((tier || model || effort) && !hasPrompt) {
+		errorOut('--tier, --model, and --effort need --prompt', options, 'MODEL_WITHOUT_PROMPT');
+	}
+
 	let graceMinutes: number | undefined;
 	if (options.graceMinutes !== undefined) {
 		if (timing.kind !== 'once') {
@@ -588,6 +605,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		pipelineName: options.pipeline,
 		graceMinutes,
 		keepOnFailure: options.keepOnFailure === true,
+		tier,
+		model,
+		effort,
 	};
 
 	let names: string[];
@@ -618,6 +638,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 				interval_minutes: timing.intervalMinutes ?? null,
 				agent_id: agent.id,
 				pipeline_name: pipelineName,
+				tier: tier ?? '',
+				model: model ?? '',
+				effort: effort ?? '',
 			})
 		);
 		return;
@@ -625,5 +648,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 
 	const quoted = names.map((n) => `'${n}'`).join(', ');
 	const noun = names.length === 1 ? 'task' : 'tasks';
-	console.log(`Scheduled ${noun} ${quoted} on agent ${agentDisplay}: ${describeTiming(timing)}`);
+	const modelLabel = formatCueTurnSettings({ tier, model, effort });
+	const modelNote = modelLabel ? ` (${modelLabel})` : '';
+	console.log(
+		`Scheduled ${noun} ${quoted} on agent ${agentDisplay}: ${describeTiming(timing)}${modelNote}`
+	);
 }

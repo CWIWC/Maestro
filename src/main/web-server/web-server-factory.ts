@@ -28,6 +28,7 @@ import { registerUsageAchievementsCallbacks } from './callbacks/usageAchievement
 import { registerAutoRunConfigCallbacks } from './callbacks/autoRunConfigCallbacks';
 import { registerSessionCrudCallbacks } from './callbacks/sessionCrudCallbacks';
 import { registerGroupCrudCallbacks } from './callbacks/groupCrudCallbacks';
+import { registerWindowCommandCallbacks } from './callbacks/windowCommandCallbacks';
 import { registerGitCallbacks } from './callbacks/gitCallbacks';
 import { registerGroupChatCallbacks } from './callbacks/groupChatCallbacks';
 import { registerDirectorNotesCallbacks } from './callbacks/directorNotesCallbacks';
@@ -194,6 +195,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		registerSessionCrudCallbacks(server, deps);
 		registerGroupCrudCallbacks(server, deps);
+		registerWindowCommandCallbacks(server, deps);
 
 		registerGitCallbacks(server, deps);
 

@@ -201,7 +201,8 @@ const CONSULT_HEADER_NO_TRANSCRIPT =
  * directory. The consult runs in the TARGET agent's own cwd, so this is the only
  * pointer it has to the user's project.
  *
- * Two modes, gated by the `crossAgentMentionsWritable` setting (default off).
+ * Consults only; a hand-off uses `handoffGrant`. Two modes, gated by the
+ * `crossAgentMentionsWritable` setting (default off).
  * The user-facing names for them are CONSULT and DELEGATION, so the grant text
  * uses those words rather than only "read-only" / "read/write":
  * - Consult (read-only, default): grant read but not write. This is advisory text
@@ -234,8 +235,58 @@ function cwdGrant(sourceCwd: string, writable: boolean): string {
 	);
 }
 
+/**
+ * Access grant for a HAND-OFF. Not `cwdGrant`: that text calls the request a
+ * consultation and points at the SOURCE directory as the place to change, while
+ * a hand-off asks the target to act on a result in its OWN workspace (where it
+ * runs). Gated by `crossAgentHandoffsWritable` (default on), separately from
+ * consults, because passing work on is the point of a hand-off. Same contract as
+ * `cwdGrant`: the text must agree with `permissionMode` on the spawn below.
+ */
+function handoffGrant(sourceCwd: string | undefined, writable: boolean): string {
+	const source = sourceCwd
+		? `The source agent worked in \`${sourceCwd}\`; you may READ files there for context. `
+		: '';
+	if (writable) {
+		return (
+			source +
+			'You may READ and MODIFY files in your own workspace to act on the result: save what ' +
+			"you learn, update notes, apply changes. Do not modify the source agent's files."
+		);
+	}
+	return (
+		source +
+		'This hand-off is READ-ONLY: do not modify or create files. Describe what you would ' +
+		'change, and tell the user hand-offs can write when Settings > General > Cross-Agent ' +
+		'Mentions > Hand-offs is set to Read/Write.'
+	);
+}
+
 /** Prefix for the relayed user question, appended after the transcript. */
 const QUESTION_PREFIX = '**Question from the user (relayed via the source agent):**';
+
+/**
+ * Header for a HAND-OFF: the source agent already did the work, and the user
+ * asked for its result to come to this agent. Saying so up front matters - the
+ * consult header reads as "answer this question", and a target that thinks it
+ * is being asked will redo the work instead of acting on the result.
+ */
+function handoffHeader(sourceAgentName: string | undefined, hasTranscript: boolean): string {
+	const source = sourceAgentName ? `the agent "${sourceAgentName}"` : 'another agent';
+	const context = hasTranscript
+		? "Below is the conversation that led up to it, then the user's instruction, then the result."
+		: "Below is the user's instruction, then the result.";
+	return (
+		`You are receiving a hand-off in Maestro. The user asked ${source} to do some work and ` +
+		`forward the result to you. ${context} Act on the result as the instruction asks; do not ` +
+		'redo the work it describes.'
+	);
+}
+
+/** Prefixes for the two halves of a hand-off. */
+const HANDOFF_INSTRUCTION_PREFIX = "**The user's instruction (relayed via the source agent):**";
+const handoffResultPrefix = (sourceAgentName: string | undefined) =>
+	`**Result from ${sourceAgentName ? sourceAgentName : 'the source agent'}:**`;
 
 /** Human-readable role label for a transcript entry's source. */
 function roleLabel(source: string): string {
@@ -274,6 +325,16 @@ export function serializeTranscript(transcript: CrossAgentTranscriptEntry[]): st
  */
 export function buildCrossAgentPrompt(request: CrossAgentRequest, writable = false): string {
 	const transcriptBlock = serializeTranscript(request.transcript);
+	if (request.handoffAnswer !== undefined) {
+		const intro = handoffHeader(request.sourceAgentName, !!transcriptBlock);
+		const header = `${intro}\n\n${handoffGrant(request.sourceCwd, writable)}`;
+		return [
+			header,
+			...(transcriptBlock ? [transcriptBlock] : []),
+			`${HANDOFF_INSTRUCTION_PREFIX}\n${request.userPrompt}`,
+			`${handoffResultPrefix(request.sourceAgentName)}\n${request.handoffAnswer}`,
+		].join('\n\n');
+	}
 	const intro = transcriptBlock ? CONSULT_HEADER : CONSULT_HEADER_NO_TRANSCRIPT;
 	const header = request.sourceCwd ? `${intro}\n\n${cwdGrant(request.sourceCwd, writable)}` : intro;
 	const sections = [header];

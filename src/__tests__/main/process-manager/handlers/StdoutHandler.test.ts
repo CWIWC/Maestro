@@ -12,7 +12,7 @@
  * - If usageIsCumulative is already false: returns raw stats, stores totals
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { EventEmitter } from 'events';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -57,7 +57,11 @@ import {
 	StdoutHandler,
 	pushResolvedOmpContextWindow,
 } from '../../../../main/process-manager/handlers/StdoutHandler';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import {
+	getErrorPatterns,
+	matchErrorPattern,
+	matchSshErrorPattern,
+} from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
@@ -1180,7 +1184,9 @@ describe('StdoutHandler', () => {
 			expect(proc.provisionalError?.message).toBe('server_error');
 		});
 
-		it('emits the notice once, ahead of the result, when the turn ends on it', () => {
+		// The renderer reads output that arrives after an error as recovery and
+		// deletes the error card, so the result has to land first.
+		it('emits the notice once, after the result, when the turn ends on it', () => {
 			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
 
 			sendJsonLine(handler, sessionId, connectionLost);
@@ -1199,8 +1205,56 @@ describe('StdoutHandler', () => {
 			);
 			expect(proc.errorEmitted).toBe(true);
 			expect(proc.provisionalError).toBeUndefined();
-			expect(errorSpy.mock.invocationCallOrder[0]).toBeLessThan(
-				bufferManager.emitDataBuffered.mock.invocationCallOrder[0]
+			expect(bufferManager.emitDataBuffered.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+			expect(bufferManager.flushDataBuffer.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+		});
+
+		// Captured live from `claude --print` when the transcript outgrew the
+		// context window. The notice's tag is the bare `invalid_request`, so the
+		// turn ended on an `unknown` error reading "invalid_request".
+		it('raises a full context window as token exhaustion, not as its bare tag', async () => {
+			// This file stubs the pattern table out; the classification under test
+			// needs the real one.
+			const real = await vi.importActual<typeof import('../../../../main/parsers/error-patterns')>(
+				'../../../../main/parsers/error-patterns'
+			);
+			vi.mocked(getErrorPatterns).mockImplementation(real.getErrorPatterns);
+			vi.mocked(matchErrorPattern).mockImplementation(real.matchErrorPattern);
+			onTestFinished(() => {
+				vi.mocked(getErrorPatterns).mockImplementation(() => ({}));
+				vi.mocked(matchErrorPattern).mockImplementation(() => null);
+			});
+			const { handler, sessionId, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				error: 'invalid_request',
+				is_api_error_message: true,
+				message: {
+					model: '<synthetic>',
+					role: 'assistant',
+					stop_reason: 'stop_sequence',
+					content: [{ type: 'text', text: 'Prompt is too long' }],
+				},
+				session_id: 'claude-session',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				terminal_reason: 'blocking_limit',
+				result: 'Prompt is too long',
+				session_id: 'claude-session',
+			});
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({ type: 'token_exhaustion', sessionId })
 			);
 		});
 
@@ -1220,6 +1274,52 @@ describe('StdoutHandler', () => {
 
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(proc.errorEmitted).toBe(false);
+		});
+
+		// maestro-p's idle watchdog ends a turn with this envelope (exit 3). The
+		// assistant text before it is the turn's last output; emitted after the
+		// error, it read as recovery and erased the error card, so a timed-out
+		// turn looked like it had simply finished.
+		it('emits a failed result envelope after the partial answer it ends', () => {
+			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
+			proc.streamedText = 'Checking the Wayback Machine for each.';
+
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'error_during_execution',
+				session_id: 'claude-session',
+				is_error: true,
+				error: 'timeout',
+			});
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Checking the Wayback Machine for each.',
+				proc
+			);
+			expect(bufferManager.emitDataBuffered.mock.invocationCallOrder[0]).toBeLessThan(
+				bufferManager.flushDataBuffer.mock.invocationCallOrder[0]
+			);
+			expect(bufferManager.flushDataBuffer.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+			expect(proc.resultEmitted).toBe(true);
+			expect(proc.errorEmitted).toBe(true);
+		});
+
+		it('flushes pending output before a mid-stream error without ending the answer', () => {
+			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
+			proc.streamedText = 'partial';
+
+			sendJsonLine(handler, sessionId, { type: 'error', message: 'Invalid API key' });
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(bufferManager.flushDataBuffer.mock.invocationCallOrder[0]).toBeLessThan(
+				errorSpy.mock.invocationCallOrder[0]
+			);
+			expect(proc.resultEmitted).toBe(false);
 		});
 
 		it('emits an ordinary error at once and clears any held notice', () => {
@@ -2689,6 +2789,58 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(proc.errorEmitted).toBe(false);
+		});
+
+		// The SSH branch is a separate emit 70 lines below the parser one, and it
+		// was outside this rule: tearing down a remote process is exactly what
+		// writes an SSH pattern to stdout, so a stopped turn surfaced as a crash
+		// and armed recovery. `matchSshErrorPattern` is mocked in this file, so
+		// each case sets its own return value and resets it, per the SSH tests
+		// further down - `clearAllMocks` in `beforeEach` clears calls, not
+		// implementations.
+		const SSH_LINE = 'ssh: connect to host build-box port 22: Connection refused\n';
+		const sshFailure = {
+			type: 'agent_crashed' as const,
+			message: 'SSH connection refused.',
+			recoverable: false,
+		};
+
+		it('does not emit agent-error for an SSH pattern on stdout after interrupt', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(sshFailure);
+
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, SSH_LINE);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('still emits agent-error for an SSH pattern on stdout when the user did not stop it', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(sshFailure);
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, SSH_LINE);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+
+			mockedMatchSsh.mockReset();
 		});
 
 		it('still emits agent-error for a cancelled grok end when the user did not stop it', async () => {

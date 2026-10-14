@@ -135,6 +135,30 @@ export const PROMPT_CHUNK_INTERVAL_MS = 20;
 // 256 bytes per paint types a 4 KB prompt in ~320ms and 100 KB in ~8s.
 export const PROMPT_CHUNK_DRAIN_TIMEOUT_MS = 250;
 
+// Falling through after the short wait is only safe for a few chunks. claude
+// treats any single read of more than 800 characters as a paste
+// (`key.length > 800` in its input handler, read from claude 2.1.296) and since
+// 2.1.294 logs that span inside `<pasted_content>` tags, which tell the model
+// the text may not be the user's own. When claude stalled for about a second
+// (a contended machine, a big session resume) the short wait timed out four
+// times, the queue filled, and claude read all 1,022 bytes at once: every
+// wrapped span seen in the field (21 of 21) was exactly one full queue. Typing
+// into a full queue is also how input gets lost: with claude frozen mid-prompt
+// (SIGSTOP), the short wait alone lost 1,022 or 2,044 bytes in 3 of 3 live
+// runs, and the hold below lost none in 7 of 7.
+//
+// So once this many chunks are written with no paint since, send() holds the
+// next one until claude paints, for up to PROMPT_STALL_DRAIN_TIMEOUT_MS. A paint
+// that was already in flight can pass for one chunk's drain signal, so the
+// queue can hold one chunk more than this count: three chunks, 768 bytes, which
+// is under both the paste limit and the queue size.
+export const PROMPT_MAX_UNDRAINED_CHUNKS = 2;
+export const CLAUDE_PASTE_THRESHOLD_CHARS = 800;
+// Long enough to outlast a stalled claude, short enough to sit well inside the
+// first-byte budget. A screen that never paints costs this once per prompt:
+// after one long wait runs out, send() goes back to the short wait.
+export const PROMPT_STALL_DRAIN_TIMEOUT_MS = 30_000;
+
 // claude also discards input for a moment right after its input prompt first
 // paints, while the rest of its UI is still mounting: paced typing that started
 // the instant `ready` fired lost the first 1,022 bytes in 2 of 2 trials, while
@@ -587,12 +611,13 @@ export class TuiDriver extends EventEmitter {
 	// the PTY is already gone. claude repaints its input editor as it consumes
 	// typed input, so a paint after a write is our only proof the bytes left the
 	// PTY input queue - which is what send() paces on. The timeout is what keeps
-	// a screen that goes silent from stalling the prompt forever.
-	private waitForPaint(timeoutMs: number): Promise<void> {
-		if (this.exited) return Promise.resolve();
-		return new Promise<void>((resolve) => {
+	// a screen that goes silent from stalling the prompt forever. Resolves true
+	// for a paint (or an exit), false when the timeout ran out first.
+	private waitForPaint(timeoutMs: number): Promise<boolean> {
+		if (this.exited) return Promise.resolve(true);
+		return new Promise<boolean>((resolve) => {
 			let settled = false;
-			const done = (): void => {
+			const done = (painted: boolean): void => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
@@ -600,12 +625,13 @@ export class TuiDriver extends EventEmitter {
 				// the next paint drains it. notifyPaint() has already swapped the
 				// array out by the time it calls us, so this only ever fires on
 				// the timeout path.
-				const at = this.paintWaiters.indexOf(done);
+				const at = this.paintWaiters.indexOf(onPaint);
 				if (at >= 0) this.paintWaiters.splice(at, 1);
-				resolve();
+				resolve(painted);
 			};
-			const timer = setTimeout(done, timeoutMs);
-			this.paintWaiters.push(done);
+			const onPaint = (): void => done(true);
+			const timer = setTimeout(() => done(false), timeoutMs);
+			this.paintWaiters.push(onPaint);
 		});
 	}
 
@@ -646,17 +672,28 @@ export class TuiDriver extends EventEmitter {
 		// Extra taps on an already-submitted (empty) input are no-ops.
 		// See PROMPT_TAB_SPACES: a raw `\t` would be read as the Tab key.
 		const chunks = chunkPromptForPty(expandPromptTabs(text));
+		// Chunks written since claude last painted, i.e. possibly still unread.
+		let undrained = 0;
+		let stallWaitSpent = false;
 		for (let i = 0; i < chunks.length; i += 1) {
 			ptyProcess.write(chunks[i]);
 			if (i === chunks.length - 1) break;
+			undrained += 1;
 			// Drain-aware pacing: hold the next chunk until claude paints (proof
 			// it read this one), then honour the floor. See
 			// PROMPT_CHUNK_DRAIN_TIMEOUT_MS. Ordering matters - the paint wait is
 			// armed AFTER the write, so a paint still in flight from before the
 			// write cannot be mistaken for this chunk's drain signal for more than
 			// one chunk, and the size budget covers that one.
-			await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+			// With PROMPT_MAX_UNDRAINED_CHUNKS unread, one more would let claude
+			// read a paste-sized batch, so the wait becomes the long one.
+			const holdForStall = undrained >= PROMPT_MAX_UNDRAINED_CHUNKS && !stallWaitSpent;
+			const painted = await this.waitForPaint(
+				holdForStall ? PROMPT_STALL_DRAIN_TIMEOUT_MS : PROMPT_CHUNK_DRAIN_TIMEOUT_MS
+			);
 			if (this.exited) return;
+			if (painted) undrained = 0;
+			else if (holdForStall) stallWaitSpent = true;
 			await new Promise<void>((resolve) => setTimeout(resolve, PROMPT_CHUNK_INTERVAL_MS));
 			if (this.exited) return;
 		}

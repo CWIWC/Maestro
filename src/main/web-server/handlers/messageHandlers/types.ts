@@ -7,6 +7,7 @@
 import { WebSocket } from 'ws';
 import type {
 	AutoRunDocument,
+	AutoRunState,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -40,6 +41,8 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
+	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
@@ -112,6 +115,12 @@ export interface LiveSessionInfo {
  */
 export interface MessageHandlerCallbacks {
 	getSessionDetail: (sessionId: string) => SessionDetailForHandler | null;
+	/**
+	 * The live Auto Run state the desktop last broadcast for an agent (what the
+	 * Auto Run panel shows), or undefined when none is running. The session detail
+	 * does not carry it.
+	 */
+	getAutoRunState?: (sessionId: string) => AutoRunState | undefined;
 	executeCommand: (
 		sessionId: string,
 		command: string,
@@ -138,6 +147,10 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli window` - list windows, move an agent or a group between them. */
+	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (

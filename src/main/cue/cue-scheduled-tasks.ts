@@ -30,7 +30,9 @@ import {
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
-import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
+import { applyCueTurnSettingsPatch, cueTurnSettingsOf } from '../../shared/cue/turn-settings';
+import { patchSubscriptionInYaml } from './cue-subscription-edit';
+import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
 import { removeSubscriptionFromYaml } from './cue-self-destruct';
 import { calculateNextScheduledTime } from './triggers/cue-schedule-utils';
@@ -201,6 +203,7 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		graceMinutes: sub.grace_minutes,
 		notifyMessage: sub.notify?.message,
 		notifySticky: sub.notify?.sticky,
+		...cueTurnSettingsOf(sub),
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -258,6 +261,13 @@ export function buildScheduledTaskSubscriptions(
 	if (!hasPrompt && !hasNotify) {
 		throw new Error('a scheduled task needs a prompt, a notification, or both');
 	}
+	const turnSettings = cueTurnSettingsOf(input);
+	if (turnSettings?.tier && turnSettings.model) {
+		throw new Error('set a model tier or an exact model, not both');
+	}
+	if (turnSettings && !hasPrompt) {
+		throw new Error('a model tier, model, or effort needs a prompt to run');
+	}
 
 	const timing: Record<string, unknown> = {};
 	let baseName: string;
@@ -312,6 +322,7 @@ export function buildScheduledTaskSubscriptions(
 			enabled: true,
 			action: 'prompt',
 			prompt: promptText,
+			...turnSettings,
 			...timing,
 			agent_id: agent.id,
 			pipeline_name: pipelineName,
@@ -371,89 +382,55 @@ export async function updateScheduledTask(
 	name: string,
 	patch: ScheduledTaskUpdateInput
 ): Promise<{ updated: boolean; reason?: string }> {
-	const configPath = resolveCueConfigPath(projectRoot);
-	if (!configPath) return { updated: false, reason: 'cue.yaml not found' };
-
-	let raw: string;
-	try {
-		raw = await fs.promises.readFile(configPath, 'utf-8');
-	} catch (err) {
-		return { updated: false, reason: `read failed: ${errText(err)}` };
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = yaml.load(raw);
-	} catch (err) {
-		return { updated: false, reason: `yaml parse failed: ${errText(err)}` };
-	}
-	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-		return { updated: false, reason: 'cue.yaml root is not a mapping' };
-	}
-
-	const root = parsed as Record<string, unknown>;
-	const subs = root.subscriptions;
-	if (!Array.isArray(subs)) return { updated: false, reason: 'cue.yaml has no subscriptions list' };
-
-	const target = subs.find(
-		(entry) =>
-			entry && typeof entry === 'object' && (entry as Record<string, unknown>).name === name
-	) as Record<string, unknown> | undefined;
-	if (!target) return { updated: false, reason: `subscription "${name}" not found` };
-
-	const event = typeof target.event === 'string' ? target.event : '';
-	if (!isScheduledTaskEvent(event)) {
-		return { updated: false, reason: `"${name}" is not a scheduled task (event: ${event})` };
-	}
-	const kind = kindForEvent(event);
-
-	if (patch.fireAt !== undefined) {
-		if (kind !== 'once') return { updated: false, reason: 'only a one-shot task has a fire time' };
-		const ms = Date.parse(patch.fireAt);
-		if (!Number.isFinite(ms)) return { updated: false, reason: `unparseable fire time` };
-		target.fire_at = new Date(ms).toISOString();
-	}
-	if (patch.scheduleTimes !== undefined) {
-		if (kind !== 'daily') return { updated: false, reason: 'only a daily task has schedule times' };
-		try {
-			target.schedule_times = normalizeTimes(patch.scheduleTimes);
-		} catch (err) {
-			return { updated: false, reason: errText(err) };
+	return patchSubscriptionInYaml(projectRoot, name, (target) => {
+		const event = typeof target.event === 'string' ? target.event : '';
+		if (!isScheduledTaskEvent(event)) {
+			return `"${name}" is not a scheduled task (event: ${event})`;
 		}
-	}
-	if (patch.scheduleDays !== undefined) {
-		if (kind !== 'daily') return { updated: false, reason: 'only a daily task has schedule days' };
-		if (patch.scheduleDays.length > 0) target.schedule_days = patch.scheduleDays;
-		else delete target.schedule_days;
-	}
-	if (patch.intervalMinutes !== undefined) {
-		if (kind !== 'interval') {
-			return { updated: false, reason: 'only a repeating task has an interval' };
-		}
-		try {
-			assertMinutes(patch.intervalMinutes, 'interval minutes', 1);
-		} catch (err) {
-			return { updated: false, reason: errText(err) };
-		}
-		target.interval_minutes = patch.intervalMinutes;
-	}
-	if (patch.prompt !== undefined) target.prompt = patch.prompt;
-	if (patch.label !== undefined) target.label = truncateTaskLabel(patch.label);
-	if (patch.enabled !== undefined) target.enabled = patch.enabled;
-	if (patch.notify !== undefined) {
-		const notifyConfig: Record<string, unknown> = { message: patch.notify.message };
-		if (patch.notify.sticky === true) notifyConfig.sticky = true;
-		target.notify = notifyConfig;
-	}
+		const kind = kindForEvent(event);
 
-	const header = extractLeadingCommentBlock(raw);
-	const dumped = yaml.dump(root, { lineWidth: -1, noRefs: true, sortKeys: false });
-	try {
-		writeCueYamlAtomicSync(configPath, header + dumped);
-	} catch (err) {
-		return { updated: false, reason: `write failed: ${errText(err)}` };
-	}
-	return { updated: true };
+		if (patch.fireAt !== undefined) {
+			if (kind !== 'once') return 'only a one-shot task has a fire time';
+			const ms = Date.parse(patch.fireAt);
+			if (!Number.isFinite(ms)) return `unparseable fire time`;
+			target.fire_at = new Date(ms).toISOString();
+		}
+		if (patch.scheduleTimes !== undefined) {
+			if (kind !== 'daily') return 'only a daily task has schedule times';
+			try {
+				target.schedule_times = normalizeTimes(patch.scheduleTimes);
+			} catch (err) {
+				return errText(err);
+			}
+		}
+		if (patch.scheduleDays !== undefined) {
+			if (kind !== 'daily') return 'only a daily task has schedule days';
+			if (patch.scheduleDays.length > 0) target.schedule_days = patch.scheduleDays;
+			else delete target.schedule_days;
+		}
+		if (patch.intervalMinutes !== undefined) {
+			if (kind !== 'interval') return 'only a repeating task has an interval';
+			try {
+				assertMinutes(patch.intervalMinutes, 'interval minutes', 1);
+			} catch (err) {
+				return errText(err);
+			}
+			target.interval_minutes = patch.intervalMinutes;
+		}
+		if (patch.prompt !== undefined) target.prompt = patch.prompt;
+		if (patch.label !== undefined) target.label = truncateTaskLabel(patch.label);
+		if (patch.enabled !== undefined) target.enabled = patch.enabled;
+		if (patch.notify !== undefined) {
+			const notifyConfig: Record<string, unknown> = { message: patch.notify.message };
+			if (patch.notify.sticky === true) notifyConfig.sticky = true;
+			target.notify = notifyConfig;
+		}
+		if (patch.turnSettings !== undefined) {
+			const refusal = applyCueTurnSettingsPatch(target, patch.turnSettings);
+			if (refusal !== null) return refusal;
+		}
+		return null;
+	});
 }
 
 function normalizeTimes(times: string[] | undefined): string[] {

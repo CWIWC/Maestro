@@ -332,6 +332,24 @@ describe('agent-definitions', () => {
 			expect(reasoningOption).toBeDefined();
 			expect(reasoningOption?.type).toBe('select');
 			expect((reasoningOption as any)?.dynamic).toBe(true);
+			// The static fallback shown before models_cache.json exists. `minimal`
+			// is refused by every current Codex model with a 400, so offering it
+			// would hand the user a setting that fails every turn.
+			expect((reasoningOption as any)?.options).not.toContain('minimal');
+			expect((reasoningOption as any)?.options).toEqual(
+				expect.arrayContaining(['', 'low', 'medium', 'high', 'xhigh'])
+			);
+			expect(reasoningOption?.argBuilder?.('xhigh')).toEqual([
+				'-c',
+				'model_reasoning_effort="xhigh"',
+			]);
+			expect(reasoningOption?.argBuilder?.('')).toEqual([]);
+
+			const summaryOption = codex?.configOptions?.find((opt) => opt.key === 'reasoningSummary');
+			expect(summaryOption?.type).toBe('select');
+			expect(codex?.configOptions?.filter((opt) => opt.key === 'reasoningSummary')).toHaveLength(1);
+			expect(summaryOption?.default).toBe('');
+			expect((summaryOption as any)?.options).toEqual(['', 'auto', 'concise', 'detailed', 'none']);
 		});
 
 		it('should have configOptions for opencode', () => {

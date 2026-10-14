@@ -29,8 +29,8 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
-import { formatNumber, formatDurationLong } from '../../../shared/formatters';
-import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
+import { formatCount, formatNumber, formatDurationLong } from '../../../shared/formatters';
+import { resolveHistoryEntryLimit } from '../../../shared/history';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -97,6 +97,7 @@ export function RichOverview({
 	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const retentionLimit = useSettingsStore((s) => resolveHistoryEntryLimit(s.maxLogBuffer));
 	// Agent -> group mapping for narrative bucketing. Derived from live session
 	// state, never from the model.
 	const groupLookup = useNarrativeGroupLookup();
@@ -289,8 +290,8 @@ export function RichOverview({
 								theme={theme}
 								data={agentBars}
 								unitLabel="history entries in this window"
-								atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
-									MAX_ENTRIES_PER_SESSION
+								atLeastHint={`At least this many. This agent's history file is full at its ${formatCount(
+									retentionLimit
 								)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
 							/>
 						</ChartErrorBoundary>

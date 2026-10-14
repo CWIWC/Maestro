@@ -116,7 +116,7 @@ function resetStore() {
 		toastPosition: 'bottom-right',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: 10000,
 		maxOutputLines: Infinity,
 		osNotificationsEnabled: true,
 		audioFeedbackEnabled: false,
@@ -247,7 +247,7 @@ describe('settingsStore', () => {
 			expect(state.toastPosition).toBe('bottom-right');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
-			expect(state.maxLogBuffer).toBe(5000);
+			expect(state.maxLogBuffer).toBe(10000);
 			expect(state.maxOutputLines).toBe(Infinity);
 			expect(state.osNotificationsEnabled).toBe(true);
 			expect(state.audioFeedbackEnabled).toBe(false);
@@ -1162,9 +1162,9 @@ describe('settingsStore', () => {
 		});
 
 		it('setMaxLogBuffer updates state and calls logger.setMaxLogBuffer', async () => {
-			await useSettingsStore.getState().setMaxLogBuffer(10000);
-			expect(useSettingsStore.getState().maxLogBuffer).toBe(10000);
-			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(10000);
+			await useSettingsStore.getState().setMaxLogBuffer(25000);
+			expect(useSettingsStore.getState().maxLogBuffer).toBe(25000);
+			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(25000);
 		});
 
 		it('setPreventSleepEnabled updates state, persists, and calls power.setEnabled', async () => {
@@ -2682,6 +2682,34 @@ describe('settingsStore', () => {
 			expect(shortcuts.focusActiveTab.keys).toEqual(['Alt', 'Meta', 'ArrowUp']);
 			// The freed combo now belongs to cross-tab message search.
 			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
+		});
+
+		it('does not re-persist a map the migration leaves unchanged (settings:set ping-pong)', async () => {
+			// nextUnreadTab at its own default used to match a stale remap onto the
+			// reserved Cmd+Shift+Down, which the guard reverted: the output equalled
+			// the input but the flag stayed raised, so every load wrote and notified
+			// the peer window, which did the same. A no-op migration must not write.
+			vi.mocked(window.maestro.settings.set).mockClear();
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Alt', 'Meta', 'ArrowDown'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'shortcuts')
+			).toHaveLength(0);
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
 		});
 
 		it('strips a persisted Cmd+Shift+Down binding and restores the bundled default', async () => {

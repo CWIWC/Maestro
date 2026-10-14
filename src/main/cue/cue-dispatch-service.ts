@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueCommand, CueEvent, CueNotifyConfig, CueSubscription } from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
+import { cueTurnSettingsOf, type CueTurnSettings } from '../../shared/cue/turn-settings';
 
 export interface CueDispatchServiceDeps {
 	getSessions: () => Array<{ id: string; name: string }>;
@@ -18,7 +19,8 @@ export interface CueDispatchServiceDeps {
 		command?: CueCommand,
 		chainRootId?: string,
 		parentEventId?: string,
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		turnSettings?: CueTurnSettings
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/**
@@ -91,6 +93,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			// Surface `cue.fired` to subscribed plugins (type only, no prompt text).
 			deps.onTriggerFired?.(event.type);
 
+			// One model choice per subscription: every fan-out target shares it.
+			const turnSettings = cueTurnSettingsOf(sub);
+
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');
 				deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
@@ -147,7 +152,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						sub.action,
 						sub.command,
 						chainRootId,
-						parentEventId
+						parentEventId,
+						undefined,
+						turnSettings
 					);
 					dispatched++;
 				}
@@ -193,7 +200,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				sub.command,
 				chainRootId,
 				parentEventId,
-				resolvedNotify
+				resolvedNotify,
+				turnSettings
 			);
 			return 1;
 		},

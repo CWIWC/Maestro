@@ -840,6 +840,8 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+		onRemoteCommand: vi.fn(() => () => {}),
+		sendRemoteCommandResponse: vi.fn(),
 	},
 	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
 	// test that sends a message doesn't accidentally rename tabs; tests that care

@@ -2388,7 +2388,9 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const options = await detector.discoverConfigOptions('codex', 'reasoningEffort');
-			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+			// No `minimal`: every current Codex model refuses it with a 400, so the
+			// fallback must not offer a setting that fails every turn.
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 			expect(logger.debug).toHaveBeenCalledWith(
 				'Could not read Codex models_cache.json for config option discovery',
 				'AgentDetector'

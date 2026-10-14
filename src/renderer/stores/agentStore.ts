@@ -25,7 +25,6 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	BmadCommand,
-	ConsultHoldTarget,
 } from '../types';
 import type {
 	AgentCapabilitiesSnapshot,
@@ -33,6 +32,7 @@ import type {
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
@@ -46,11 +46,21 @@ import { noteDispatch } from './retryStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
-import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
-import { withConsultPendingNote } from '../services/crossAgentConsultHold';
+import {
+	dispatchCrossAgentMentionsForMessage,
+	withMentionTurnNotes,
+	type CrossAgentMentionDispatch,
+} from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
-import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
+import {
+	applyQueuedItemDispatchFailure,
+	applyQueuedItemRelease,
+	clearSpawnCollision,
+	noteSpawnCollision,
+	SPAWN_COLLISION_MAX_ATTEMPTS,
+} from '../utils/executionQueue';
 import { logger } from '../utils/logger';
+import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 
 // ============================================================================
 // Store Types
@@ -406,15 +416,40 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
 
+		// Name the tab from the message it is about to run. The composer names at
+		// submit time, but `dispatch --queue`, a busy `dispatch --new-tab`, a snooze
+		// wake prompt and other external producers only reach a tab through this
+		// drain, so without it a tab fed only by the queue stays unnamed forever. A
+		// tab that is already named (or mid-naming) is left alone by the helper's
+		// guards, so composer-queued items cost nothing. Runs ahead of the mention
+		// dispatch so a leading-mention (`crossAgentOnly`) item names its tab the
+		// way the composer does. A released consult hold (`agentContext`) is
+		// skipped: its text is Maestro's own "X replied" note, not something the
+		// user asked for, and the message it continues was named when it was sent.
+		if (
+			item.type === 'message' &&
+			item.text?.trim() &&
+			!item.agentContext &&
+			!item.awaitingConsult
+		) {
+			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		}
+
 		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
 		// becomes this agent's turn - not when the user typed it. Deferring is the
 		// whole point: consulting at submit time pulls the mentioned agent into a
 		// question that is still sitting behind other queued work.
 		// When this agent answers too, the dispatch also holds the turn open until
-		// the consult replies; `consultTargets` is who it is waiting on.
-		let consultTargets: ConsultHoldTarget[] = [];
+		// the consult replies, or arms a hand-off of its answer; `mentionDispatch`
+		// is what the turn's prompt has to be told about either.
+		let mentionDispatch: CrossAgentMentionDispatch | undefined;
 		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
-			consultTargets = dispatchCrossAgentMentionsForMessage(item.text, session, targetTab.id) ?? [];
+			mentionDispatch = dispatchCrossAgentMentionsForMessage(
+				item.text,
+				session,
+				targetTab.id,
+				item.images
+			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
 			// dispatch. Return before spawning - and before `noteDispatch`, since there
@@ -477,13 +512,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				const messagePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 				// `agentContext` is agent-only text the transcript never shows (a
 				// released consult hold carries the replies verbatim in it).
-				const effectivePrompt = withConsultPendingNote(
+				// A queued message that is the tab's FIRST turn opens a new provider
+				// session, so it carries the New Session Message like a typed one does.
+				// A message queued behind a running turn resumes, and gets nothing.
+				const effectivePrompt = withMentionTurnNotes(
 					takePendingMergedContext(
 						sessionId,
 						targetTab.id,
-						item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt
+						prependNewSessionMessageOnFirstTurn(
+							item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt,
+							session.newSessionMessage,
+							tabAgentSessionId
+						)
 					),
-					consultTargets
+					mentionDispatch
 				);
 
 				// NOTE: The user-visible log entry for this message is appended by the
@@ -620,7 +662,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: substitutedPrompt,
+						// Agent-only, like the message branch: the log entry above keeps
+						// the bare command prompt.
+						prompt: prependNewSessionMessageOnFirstTurn(
+							substitutedPrompt,
+							session.newSessionMessage,
+							tabAgentSessionId
+						),
 						appendSystemPrompt: appendSystemPromptForCommand,
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
@@ -670,6 +718,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					return false;
 				}
 			}
+			clearSpawnCollision(item.id);
 			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
@@ -693,7 +742,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// retry card already explaining the wait. Any other failure would repeat
 			// identically on the next tick, so the item comes back HELD: preserved,
 			// visible, one click from Force Send, and unable to spin the queue.
+			//
+			// "Self-corrects" assumes the old process actually goes away. When its
+			// entry never clears, the runnable item re-triggers the drain that just
+			// failed, so collisions are counted: the drain backs off between them
+			// (see noteSpawnCollision), and past the cap the item is held with an
+			// error frame like any other failure rather than spinning forever.
 			const isSpawnCollision = isAgentAlreadyRunningError(error);
+			const isTransientCollision =
+				isSpawnCollision && noteSpawnCollision(item.id) < SPAWN_COLLISION_MAX_ATTEMPTS;
+			if (!isTransientCollision) clearSpawnCollision(item.id);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
@@ -703,8 +761,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const recovered = applyQueuedItemDispatchFailure(s, item, { hold: !isSpawnCollision });
-					if (isSpawnCollision) return recovered;
+					const recovered = applyQueuedItemDispatchFailure(s, item, {
+						hold: !isTransientCollision,
+					});
+					if (isTransientCollision) return recovered;
 
 					const resolvedTabId = item.tabId ?? s.activeTabId;
 					const targetTabExists = recovered.aiTabs?.some((tab) => tab.id === resolvedTabId);

@@ -1534,6 +1534,39 @@ describe('useDebouncedPersistence', () => {
 					['second']
 				);
 			});
+
+			it('should tombstone an agent removed right after a restore that marks the read ok last', () => {
+				// useSessionRestoration writes the loaded tree first and only then
+				// flips sessionsReadOk. A worktree child the startup scan removes
+				// before the first flush must still reach disk as a removal: setAll
+				// keeps omitted ids, so it would come back on every launch.
+				useSessionStore.setState({ sessionsReadOk: false });
+				const parent = makeSession({ id: 'parent' });
+				const child = makeSession({ id: 'stale-child' });
+				const initialLoadRef = makeInitialLoadRef(false);
+
+				renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([parent, child]);
+				});
+				act(() => {
+					useSessionStore.setState({ sessionsReadOk: true });
+				});
+				initialLoadRef.current = true;
+
+				act(() => {
+					seedSessions([parent]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'parent' })],
+					['stale-child']
+				);
+			});
 		});
 
 		describe('debounce behavior', () => {

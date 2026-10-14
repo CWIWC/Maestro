@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ClaudeOutputParser } from '../../../main/parsers/claude-output-parser';
+import { clearRememberedClaudeSessionCosts } from '../../../shared/claudeCostTracker';
 
 describe('ClaudeOutputParser', () => {
 	const parser = new ClaudeOutputParser();
@@ -1221,6 +1222,50 @@ describe('ClaudeOutputParser', () => {
 			expect(parser.isProvisionalErrorNotice(connectionLost)).toBe(true);
 		});
 
+		it('keeps the bare tag when the notice text matches no pattern', () => {
+			expect(parser.detectErrorFromParsed(connectionLost)).toMatchObject({
+				type: 'unknown',
+				message: 'server_error',
+			});
+		});
+
+		// Captured live from `claude --print` when the transcript outgrew the
+		// context window. The tag alone classified as `unknown`.
+		it('classifies a notice from its text when the tag matches no pattern', () => {
+			const promptTooLong = {
+				type: 'assistant',
+				error: 'invalid_request',
+				is_api_error_message: true,
+				message: {
+					model: '<synthetic>',
+					role: 'assistant',
+					stop_reason: 'stop_sequence',
+					content: [{ type: 'text', text: 'Prompt is too long' }],
+				},
+				session_id: 'sess-1',
+			};
+
+			expect(parser.isProvisionalErrorNotice(promptTooLong)).toBe(true);
+			expect(parser.detectErrorFromParsed(promptTooLong)).toMatchObject({
+				type: 'token_exhaustion',
+				message: 'Prompt is too long. Try a shorter message or start a new session.',
+			});
+		});
+
+		it('does not classify a real model message from its text', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					error: 'invalid_request',
+					message: {
+						model: 'claude-opus-5',
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Prompt is too long' }],
+					},
+				})
+			).toMatchObject({ type: 'unknown', message: 'invalid_request' });
+		});
+
 		it('accepts the camelCase flag or the synthetic model on its own', () => {
 			expect(
 				parser.isProvisionalErrorNotice({
@@ -1446,6 +1491,108 @@ describe('ClaudeOutputParser', () => {
 					},
 				})
 			).toBeNull();
+		});
+	});
+
+	// claude reports modelUsage and total_cost_usd as the SESSION's running
+	// totals; Maestro records one row per turn, so the parser reports the turn's
+	// share. Numbers captured from three `claude -p` turns of one session.
+	describe('session running totals', () => {
+		const SONNET = 'claude-sonnet-5-5';
+		const result = (sessionId: string, total: number, cacheRead: number) =>
+			JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				result: 'ok',
+				session_id: sessionId,
+				total_cost_usd: total,
+				usage: { input_tokens: 2, output_tokens: 3, cache_read_input_tokens: 19481 },
+				modelUsage: {
+					[SONNET]: {
+						inputTokens: 4,
+						outputTokens: 6,
+						cacheReadInputTokens: cacheRead,
+						cacheCreationInputTokens: 52986,
+						costUSD: total,
+						contextWindow: 1_000_000,
+					},
+				},
+			});
+		const afterTurnOne = {
+			totalCostUSD: 0.1174548,
+			modelUsage: {
+				[SONNET]: {
+					inputTokens: 2,
+					outputTokens: 3,
+					cacheReadInputTokens: 12368,
+					cacheCreationInputTokens: 29046,
+					webSearchRequests: 0,
+					costUSD: 0.1174548,
+				},
+			},
+		};
+		const usageOf = (p: ClaudeOutputParser, line: string) => p.extractUsage(p.parseJsonLine(line)!);
+
+		beforeEach(() => clearRememberedClaudeSessionCosts());
+
+		it("reports a resumed turn's share, not the session total", () => {
+			const p = new ClaudeOutputParser();
+			p.primeResumedSession('s1', afterTurnOne);
+
+			const usage = usageOf(p, result('s1', 0.2151969, 31849));
+
+			expect(usage?.costUsd).toBeCloseTo(0.0977421, 9);
+			expect(usage?.cacheReadTokens).toBe(19481);
+			expect(usage?.inputTokens).toBe(2);
+			expect(usage?.contextWindow).toBe(1_000_000);
+		});
+
+		it('passes a fresh session through unchanged', () => {
+			const p = new ClaudeOutputParser();
+
+			expect(usageOf(p, result('s1', 0.1174548, 12368))?.costUsd).toBe(0.1174548);
+		});
+
+		// A remote transcript cannot be read, so the second turn's baseline is
+		// what this app saw the session report on the first.
+		it('uses what the session reported earlier when the transcript is unreadable', () => {
+			usageOf(new ClaudeOutputParser(), result('s1', 0.1174548, 12368));
+
+			const second = new ClaudeOutputParser();
+			second.primeResumedSession('s1', undefined);
+
+			expect(usageOf(second, result('s1', 0.2151969, 31849))?.costUsd).toBeCloseTo(0.0977421, 9);
+		});
+
+		it('uses what the session reported earlier when the spawn did not say it resumes', () => {
+			usageOf(new ClaudeOutputParser(), result('s1', 0.1174548, 12368));
+
+			const second = new ClaudeOutputParser();
+
+			expect(usageOf(second, result('s1', 0.2151969, 31849))?.costUsd).toBeCloseTo(0.0977421, 9);
+		});
+
+		// The held-error path parses the result line a second time.
+		it('reports the same share when the same result is parsed twice', () => {
+			usageOf(new ClaudeOutputParser(), result('s1', 0.1174548, 12368));
+			const second = new ClaudeOutputParser();
+			const line = result('s1', 0.2151969, 31849);
+
+			const first = usageOf(second, line)?.costUsd;
+
+			expect(usageOf(second, line)?.costUsd).toBe(first);
+			expect(first).toBeCloseTo(0.0977421, 9);
+		});
+
+		it('prices the turn from its own usage when nothing is known about the session', () => {
+			const p = new ClaudeOutputParser();
+			p.primeResumedSession('s1', undefined);
+
+			const usage = usageOf(p, result('s1', 0.2151969, 31849));
+
+			expect(usage?.cacheReadTokens).toBe(19481);
+			expect(usage?.costUsd).toBeGreaterThan(0);
+			expect(usage?.costUsd).toBeLessThan(0.2151969);
 		});
 	});
 });

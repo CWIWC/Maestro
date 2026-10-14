@@ -16,6 +16,12 @@ import { getOutputParser } from '../parsers';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../utils/ssh-remote-signal';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -31,6 +37,9 @@ export interface CueActiveProcess {
 	startTime: number;
 	/** For SSH spawns: the agent invocation running on the remote host. */
 	sshRemoteCommand?: string;
+	/** For stdin-script SSH spawns: where the remote agent's pid is recorded, so
+	 *  a stop or timeout reaches the agent and not only the local ssh client. */
+	sshRemotePidFile?: string;
 	/** Live ref to the accumulating stdout buffer - filled by the runProcess
 	 *  closure as chunks arrive. Exposed via `getActiveProcessOutput` so the
 	 *  renderer can poll for in-flight logs without a separate subscription
@@ -236,6 +245,23 @@ export function killCueProcess(
 }
 
 /**
+ * Terminate the agent an SSH Cue run started on its remote host. Killing the
+ * local ssh client alone leaves that agent running (see ssh-remote-signal.ts).
+ */
+function terminateRemoteCueAgent(runId: string, entry: CueActiveProcess): void {
+	if (!entry.sshRemotePidFile) return;
+	signalRemoteAgent(
+		{
+			sshCommand: entry.command,
+			sshArgs: entry.args,
+			pidFile: entry.sshRemotePidFile,
+			sessionId: runId,
+		},
+		'terminate'
+	);
+}
+
+/**
  * Register a running Cue child process. Every Cue spawn path registers here -
  * agent prompts ({@link runProcess}), `action: command` shell commands, and
  * maestro-cli calls - because this map is what the Process Monitor lists and
@@ -302,7 +328,12 @@ export function runProcess(
 		let stdout = '';
 		let stderr = '';
 
-		const untrack = trackCueProcess(runId, {
+		const sshRemotePidFile =
+			sshStdinScript && sshRemoteEnabled && sshConnectionArgs(spec.args)
+				? newRemotePidFilePath()
+				: undefined;
+
+		const entry: CueActiveProcess = {
 			child,
 			command: spec.command,
 			args: spec.args,
@@ -310,9 +341,11 @@ export function runProcess(
 			toolType,
 			startTime: Date.now(),
 			sshRemoteCommand: spec.sshRemoteCommand,
+			sshRemotePidFile,
 			getStdout: () => stdout,
 			getStderr: () => stderr,
-		});
+		};
+		const untrack = trackCueProcess(runId, entry);
 		let settled = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -365,7 +398,9 @@ export function runProcess(
 		// Write to stdin based on execution mode
 		if (sshStdinScript && sshRemoteEnabled) {
 			// SSH stdin script mode - send the full bash script via stdin
-			child.stdin?.write(sshStdinScript);
+			child.stdin?.write(
+				sshRemotePidFile ? withRemotePidRecord(sshStdinScript, sshRemotePidFile) : sshStdinScript
+			);
 			child.stdin?.end();
 		} else if (stdinPrompt && sshRemoteEnabled) {
 			// SSH small prompt mode - send raw prompt via stdin
@@ -381,6 +416,7 @@ export function runProcess(
 			timeoutTimer = setTimeout(() => {
 				if (settled) return;
 				onLog('cue', `[CUE] Run ${runId} timed out after ${timeoutMs}ms, killing process`);
+				terminateRemoteCueAgent(runId, entry);
 				killCueProcess(child);
 
 				// If the process exits after kill, mark as timeout
@@ -403,6 +439,7 @@ export function stopProcess(runId: string): boolean {
 	const entry = activeProcesses.get(runId);
 	if (!entry) return false;
 
+	terminateRemoteCueAgent(runId, entry);
 	killCueProcess(entry.child);
 	return true;
 }
@@ -414,6 +451,7 @@ export function stopProcess(runId: string): boolean {
 export function stopAllProcesses(): void {
 	for (const [runId, entry] of activeProcesses) {
 		// Use sync kills so process trees are dead before the app exits.
+		terminateRemoteCueAgent(runId, entry);
 		killCueProcess(entry.child, true);
 		activeProcesses.delete(runId);
 	}

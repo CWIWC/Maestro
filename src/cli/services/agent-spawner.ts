@@ -15,6 +15,7 @@ import type { ParsedEvent } from '../../main/parsers/agent-output-parser';
 import { createOutputParser } from '../../main/parsers/parser-factory';
 import { deliverActivity } from './agent-run-activity';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
+import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
 import { checkCustomPath } from '../../main/agents/path-prober';
@@ -29,6 +30,11 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
+import {
+	describeEffortRejection,
+	noteEffortRejection,
+	parseEffortRejection,
+} from '../../shared/effortRejection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
@@ -635,6 +641,19 @@ async function spawnClaudeAgent(
 		spawnEnv = env;
 	}
 
+	// Claude reports its cost and per-model usage as running SESSION totals; the
+	// session's total as this turn starts turns them into this turn's (see
+	// src/shared/claudeCostTracker.ts). A fresh session starts from nothing.
+	const costBaseline = agentSessionId
+		? readClaudeTurnBaseline({
+				resumeSessionId: agentSessionId,
+				cwd,
+				env: spawnEnv,
+				homeDir: os.homedir(),
+				remote: !!sshRemoteConfig?.enabled,
+			})
+		: null;
+
 	return new Promise((resolve) => {
 		const options: SpawnOptions = {
 			cwd: spawnCwd,
@@ -649,6 +668,8 @@ async function spawnClaudeAgent(
 		let assistantText = ''; // Accumulate text from assistant messages as fallback
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
+		// The model the main thread last ran on; prices a turn whose baseline is unknown.
+		let lastMainModel: string | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
 
@@ -684,9 +705,22 @@ async function spawnClaudeAgent(
 				sessionId = msg.session_id;
 			}
 
+			if (
+				msg.type === 'assistant' &&
+				!msg.parent_tool_use_id &&
+				typeof msg.message?.model === 'string' &&
+				msg.message.model !== '<synthetic>'
+			) {
+				lastMainModel = msg.message.model;
+			}
+
 			// Extract usage statistics using shared aggregator
 			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+				const turn =
+					msg.type === 'result'
+						? claudeTurnCost(msg, costBaseline, lastMainModel)
+						: { modelUsage: msg.modelUsage, totalCostUsd: msg.total_cost_usd || 0 };
+				usageStats = aggregateModelUsage(turn.modelUsage, msg.usage || {}, turn.totalCostUsd);
 			}
 		};
 
@@ -904,15 +938,17 @@ async function spawnJsonLineAgent(
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
 
-	if (agentSessionId && def?.resumeArgs) {
-		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
 	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
 	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
 	// an interactive turn hand the provider identical flags. Providers with no
 	// native mechanism emit nothing here and rely on the prompt block instead.
+	// Emitted BEFORE the resume selector, same as the desktop: Codex resumes with
+	// a subcommand, and `codex exec resume` rejects `--add-dir` with exit 2.
 	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
+
+	if (agentSessionId && def?.resumeArgs) {
+		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
+	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
@@ -1214,9 +1250,40 @@ export interface SpawnAgentOptions {
 }
 
 /**
- * Spawn an agent with a prompt and return the result
+ * Spawn an agent with a prompt and return the result.
+ *
+ * When the provider refuses the effort level the turn asked for, the turn is
+ * run once more with the effort left to the agent's own configuration. The
+ * effort a CLI run sends usually came off Maestro's static ladder (a document
+ * hint, the synopsis pin), and a provider can retire a rung without notice;
+ * failing every task of a playbook on a value nobody typed is the wrong
+ * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
+ * run stop asking for the value and report why (see shared/effortRejection.ts).
  */
 export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	if (result.success || !options?.customEffort) return result;
+
+	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
+	if (!rejection) return result;
+
+	noteEffortRejection(toolType, rejection);
+	console.error(
+		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
+	);
+	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
+		...options,
+		customEffort: undefined,
+	});
+}
+
+async function spawnAgentOnce(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
@@ -1269,12 +1336,14 @@ export async function spawnAgent(
 }
 
 /**
- * Read a markdown document and count unchecked tasks
+ * Read a markdown document and count unchecked tasks.
+ * `missingPath` is set when the file does not exist, so a caller can name the
+ * document instead of reporting it as one with no tasks.
  */
 export function readDocAndCountTasks(
 	folderPath: string,
 	filename: string
-): { content: string; taskCount: number } {
+): { content: string; taskCount: number; missingPath?: string } {
 	const filePath = `${folderPath}/${filename}.md`;
 
 	try {
@@ -1284,7 +1353,10 @@ export function readDocAndCountTasks(
 			content,
 			taskCount: matches ? matches.length : 0,
 		};
-	} catch {
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return { content: '', taskCount: 0, missingPath: filePath };
+		}
 		return { content: '', taskCount: 0 };
 	}
 }

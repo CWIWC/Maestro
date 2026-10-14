@@ -49,6 +49,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
+			setAutoRunSteeringCommandCallback = vi.fn();
+			setWindowCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
@@ -2358,6 +2360,36 @@ describe('web-server/web-server-factory', () => {
 				'doc.md',
 				expect.any(String)
 			);
+		});
+	});
+
+	describe('autoRunSteering callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+			const request = { action: 'send', sessionId: 'session-1', text: 'use the v3 endpoint' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:autoRunSteeringCommand',
+				request,
+				expect.stringContaining('remote:autoRunSteeringCommand:response:')
+			);
+		});
+
+		// A caller blocked on a CLI command must get an answer it can read, not a
+		// rejection, when there is no window to ask.
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
 		});
 	});
 

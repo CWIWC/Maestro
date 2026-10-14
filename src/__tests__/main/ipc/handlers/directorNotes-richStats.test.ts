@@ -41,6 +41,7 @@ const mockGetSessionsStore = vi.fn().mockReturnValue({
 });
 vi.mock('../../../../main/stores', () => ({
 	getSessionsStore: (...args: any[]) => mockGetSessionsStore(...args),
+	getSettingsStore: () => ({ get: () => undefined }),
 }));
 
 // Mock the logger to keep the suite quiet.

@@ -193,7 +193,7 @@ History is stored per-session in JSON files within the `history/` subdirectory o
 - **Windows**: `%APPDATA%/maestro/history/<sessionId>.json`
 - **Linux**: `~/.config/maestro/history/<sessionId>.json`
 
-The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 5,000). History files can be passed to AI agents as context for understanding past work patterns.
+The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 10,000). History files can be passed to AI agents as context for understanding past work patterns.
 
 ## Help Panel
 

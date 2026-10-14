@@ -142,6 +142,7 @@ import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
@@ -986,6 +987,9 @@ function MaestroConsoleInner() {
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook
+
+	// Let the Feedback chat read this window's live state (read-only).
+	useEffect(() => installFeedbackLiveStateHook(), []);
 
 	// Expose notifyToast to window for debugging/testing
 	useEffect(() => {

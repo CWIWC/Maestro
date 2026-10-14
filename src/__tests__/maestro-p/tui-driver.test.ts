@@ -72,11 +72,14 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 
 import {
 	chunkPromptForPty,
+	CLAUDE_PASTE_THRESHOLD_CHARS,
 	expandPromptTabs,
 	MACOS_PTY_INPUT_QUEUE_BYTES,
 	PROMPT_CHUNK_DRAIN_TIMEOUT_MS,
 	PROMPT_CHUNK_INTERVAL_MS,
 	PROMPT_CHUNK_MAX_BYTES,
+	PROMPT_MAX_UNDRAINED_CHUNKS,
+	PROMPT_STALL_DRAIN_TIMEOUT_MS,
 	PROMPT_SETTLE_MAX_MS,
 	PROMPT_SETTLE_QUIET_MS,
 	PROMPT_TAB_SPACES,
@@ -969,6 +972,67 @@ describe('TuiDriver', () => {
 			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
 			await sending;
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+		});
+
+		// claude reads more than 800 characters in one batch as a paste and tags
+		// it as text the user may not have written. A paint already in flight can
+		// stand in for one chunk's drain signal, so the queue may hold one chunk
+		// more than the count send() holds at.
+		it("keeps the unread backlog under claude's paste threshold and the PTY queue", () => {
+			const worstCaseBytes = (PROMPT_MAX_UNDRAINED_CHUNKS + 1) * PROMPT_CHUNK_MAX_BYTES;
+			expect(worstCaseBytes).toBeLessThanOrEqual(CLAUDE_PASTE_THRESHOLD_CHARS);
+			expect(worstCaseBytes).toBeLessThan(MACOS_PTY_INPUT_QUEUE_BYTES);
+		});
+
+		// The field failure: claude stalled for about a second, the short wait
+		// timed out chunk after chunk, and a full 1,022-byte queue was read at
+		// once. Past the undrained limit only a paint releases the next chunk.
+		it('stops typing into a stalled claude once the undrained limit is reached', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('s'.repeat(PROMPT_CHUNK_MAX_BYTES * 4));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			// No paint: the short wait lets chunks through up to the limit.
+			for (let typed = 1; typed < PROMPT_MAX_UNDRAINED_CHUNKS; typed += 1) {
+				expect(mockPtyProcess.write).toHaveBeenCalledTimes(typed);
+				await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
+			}
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS);
+			// Many short waits later the stalled claude still has not painted.
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS * 20);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS);
+			// claude wakes and repaints: it read the backlog. Typing resumes.
+			feed('redraw');
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS + 1);
+			feed('redraw');
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(4);
+		});
+
+		// A screen that never paints must not strand the prompt: one long wait is
+		// the whole cost, then typing carries on at the short ceiling.
+		it('pays the long stall wait once, then types on at the short ceiling', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const chunkCount = PROMPT_MAX_UNDRAINED_CHUNKS + 3;
+			const sending = driver.send('n'.repeat(PROMPT_CHUNK_MAX_BYTES * chunkCount));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await vi.advanceTimersByTimeAsync(
+				(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS) *
+					(PROMPT_MAX_UNDRAINED_CHUNKS - 1)
+			);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS);
+			await vi.advanceTimersByTimeAsync(PROMPT_STALL_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS + 1);
+			await vi.advanceTimersByTimeAsync(
+				(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS) * 2
+			);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(chunkCount);
 		});
 
 		// send() parks on a paint that a dead PTY will never send; exit has to

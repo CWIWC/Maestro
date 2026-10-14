@@ -178,6 +178,53 @@ export function parseMediaStreamUrl(url: string, expectedToken: string): string 
 	return filePath;
 }
 
+/**
+ * Whether a media item's `path` is a remote http(s) URL rather than a local file.
+ *
+ * Remote media skips the `maestro-media://` protocol entirely: the element
+ * loads the URL itself, and Chromium range-requests a progressive MP4
+ * (H.264/AAC) over HTTP the same way it seeks a local file. Adaptive formats
+ * (HLS, DASH) and live transports (RTSP, RTMP) are NOT covered - they need a
+ * Media Source Extensions demuxer this player does not ship.
+ */
+export function isRemoteMediaUrl(value: string | null | undefined): boolean {
+	return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+/**
+ * Audio or video for a remote URL, read off the extension of its path (never
+ * the query string, so a signed `clip.mp4?sig=...` still counts as video).
+ *
+ * Falls back to `video` when the path names no known extension: a `<video>`
+ * element plays an audio-only stream too, while an `<audio>` element given a
+ * video discards the picture.
+ */
+export function getRemoteMediaKind(url: string): MediaKind {
+	try {
+		return getMediaKind(new URL(url).pathname) ?? 'video';
+	} catch {
+		return 'video';
+	}
+}
+
+/** Title for a remote media item: the last path segment, else the host. */
+export function getRemoteMediaName(url: string): string {
+	try {
+		const parsed = new URL(url);
+		const segment = parsed.pathname.split('/').filter(Boolean).pop();
+		if (segment) {
+			try {
+				return decodeURIComponent(segment);
+			} catch {
+				return segment;
+			}
+		}
+		return parsed.host || url;
+	} catch {
+		return url;
+	}
+}
+
 /** Playback speeds offered by the media transport, slowest first. */
 export const MEDIA_PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4] as const;
 

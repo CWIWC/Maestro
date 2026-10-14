@@ -818,4 +818,119 @@ describe('groomContext', () => {
 			expect(call[0].elapsedMs).toBeGreaterThanOrEqual(0);
 		}
 	});
+
+	describe('effort refused by the provider', () => {
+		// The message an AgentError carries when the API answers the effort with
+		// a 400. The turn never ran, so there is no response to fall back on.
+		const REFUSAL = {
+			type: 'unknown',
+			agentId: 'codex',
+			message:
+				'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+		};
+
+		/** First spawn is refused; every later one answers normally. */
+		function refuseFirstSpawn(pm: ReturnType<typeof createMockProcessManager>) {
+			const answer = pm.spawn.bind(pm);
+			let spawns = 0;
+			pm.spawn = (config: Record<string, unknown>) => {
+				spawns++;
+				if (spawns > 1) return answer(config);
+				const sessionId = config.sessionId as string;
+				setTimeout(() => {
+					pm._emitError(sessionId, REFUSAL);
+					pm._emitExit(sessionId, 1);
+				}, 10);
+				return { pid: 12345, success: true };
+			};
+			return () => spawns;
+		}
+
+		it('runs the turn once more with the effort left to the agent', async () => {
+			const spawnCount = refuseFirstSpawn(mockPM);
+
+			const result = await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					sessionCustomModel: 'haiku',
+					sessionCustomEffort: 'low',
+				},
+				mockPM,
+				createMockAgentDetector(agent)
+			);
+
+			expect(result.response).toBe('groomed response');
+			expect(spawnCount()).toBe(2);
+			const calls = vi.mocked(applyAgentConfigOverrides).mock.calls;
+			expect(calls[0][2]).toMatchObject({ sessionCustomEffort: 'low' });
+			expect(calls[1][2].sessionCustomEffort).toBeUndefined();
+			// Only the effort is dropped; the model the caller asked for stays.
+			expect(calls[1][2]).toMatchObject({ sessionCustomModel: 'haiku' });
+		});
+
+		it('does not retry when no effort was sent', async () => {
+			// The agent's own configured effort was refused. Nothing Maestro chose
+			// is left to drop, so the error is the caller's to see.
+			const spawnCount = refuseFirstSpawn(mockPM);
+
+			await expect(
+				groomContext(
+					{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+					mockPM,
+					createMockAgentDetector(agent)
+				)
+			).rejects.toThrow(/Unsupported value/);
+			expect(spawnCount()).toBe(1);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			let spawns = 0;
+			mockPM.spawn = (config: Record<string, unknown>) => {
+				spawns++;
+				const sessionId = config.sessionId as string;
+				setTimeout(() => mockPM._emitError(sessionId, { message: 'Not logged in' }), 10);
+				return { pid: 12345, success: true };
+			};
+
+			await expect(
+				groomContext(
+					{
+						projectRoot: '/project',
+						agentType: 'claude-code',
+						prompt: 'summarize',
+						sessionCustomEffort: 'low',
+					},
+					mockPM,
+					createMockAgentDetector(agent)
+				)
+			).rejects.toThrow('Grooming error: Not logged in');
+			expect(spawns).toBe(1);
+		});
+
+		it('surfaces the refusal when the retry is refused as well', async () => {
+			let spawns = 0;
+			mockPM.spawn = (config: Record<string, unknown>) => {
+				spawns++;
+				const sessionId = config.sessionId as string;
+				setTimeout(() => mockPM._emitError(sessionId, REFUSAL), 10);
+				return { pid: 12345, success: true };
+			};
+
+			await expect(
+				groomContext(
+					{
+						projectRoot: '/project',
+						agentType: 'claude-code',
+						prompt: 'summarize',
+						sessionCustomEffort: 'low',
+					},
+					mockPM,
+					createMockAgentDetector(agent)
+				)
+			).rejects.toThrow(/Unsupported value/);
+			expect(spawns).toBe(2);
+		});
+	});
 });

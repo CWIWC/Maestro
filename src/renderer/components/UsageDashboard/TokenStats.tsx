@@ -32,6 +32,7 @@ import { parseProviderProfileKey } from '../../../shared/providerProfiles';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { captureException } from '../../utils/sentry';
+import { BAR_CHART_GRID_CLASS, BAR_CHART_GRID_STYLE, BAR_CHART_ROW_STYLE } from './chartUtils';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
 import { ChartTooltip } from './ChartTooltip';
 import { EmptyState } from './EmptyState';
@@ -135,7 +136,7 @@ const Breakdown = memo(function Breakdown({
 			<h3 className="text-sm font-semibold mb-3" style={{ color: theme.colors.textMain }}>
 				{title}
 			</h3>
-			<div className="flex flex-col gap-2">
+			<div className={BAR_CHART_GRID_CLASS} style={BAR_CHART_GRID_STYLE}>
 				{groups.map((g, idx) => {
 					const color = colorBlindMode
 						? COLORBLIND_AGENT_PALETTE[idx % COLORBLIND_AGENT_PALETTE.length]
@@ -146,20 +147,20 @@ const Breakdown = memo(function Breakdown({
 					return (
 						<div
 							key={g.key}
-							className="flex items-center gap-3"
+							style={BAR_CHART_ROW_STYLE}
 							onMouseEnter={(e) => setHovered({ group: g, x: e.clientX, y: e.clientY })}
 							onMouseMove={(e) => setHovered({ group: g, x: e.clientX, y: e.clientY })}
 							onMouseLeave={() => setHovered(null)}
 						>
 							<span
-								className="text-xs truncate shrink-0"
-								style={{ color: theme.colors.textDim, width: '38%' }}
+								className="text-xs truncate min-w-0"
+								style={{ color: theme.colors.textDim }}
 								title={rowTitle ? rowTitle(g) : g.key}
 							>
 								{g.label}
 							</span>
 							<div
-								className="flex-1 h-4 rounded-sm overflow-hidden"
+								className="h-4 rounded-sm overflow-hidden"
 								style={{ backgroundColor: `${theme.colors.textDim}14` }}
 							>
 								<div
@@ -168,8 +169,8 @@ const Breakdown = memo(function Breakdown({
 								/>
 							</div>
 							<span
-								className="text-xs tabular-nums shrink-0 text-right"
-								style={{ color: theme.colors.textMain, width: '4.5rem' }}
+								className="text-xs tabular-nums text-right"
+								style={{ color: theme.colors.textMain, minWidth: '4.5rem' }}
 							>
 								{costText(g.costUsd, g.costEstimated)}
 							</span>

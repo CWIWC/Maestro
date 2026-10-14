@@ -274,6 +274,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showLeftPanelCollapsedInitials: {
+		description:
+			'When the left side bar is collapsed, label each agent with two letters from its name (e.g. "MR" for "Maestro RC"), tinted with its status color. Turn off to show a plain status dot instead.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	leftPanelCollapsedPillsPerRow: {
 		description:
 			'Maximum number of collapsed-group activity pills per row in the left side bar before wrapping to a new row. Range: 5-50.',

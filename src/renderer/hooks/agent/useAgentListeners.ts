@@ -92,6 +92,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		getBatchStateRef: deps.getBatchStateRef,
 		pauseBatchOnErrorRef: deps.pauseBatchOnErrorRef,
 		addHistoryEntryRef: deps.addHistoryEntryRef,
+		batchedUpdater: deps.batchedUpdater,
 		activeHiddenToolRef,
 	});
 	useAgentThinkingListener();

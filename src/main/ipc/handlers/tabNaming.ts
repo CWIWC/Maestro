@@ -29,7 +29,8 @@ import {
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-import type { ToolType } from '../../../shared/types';
+import type { AgentError, ToolType } from '../../../shared/types';
+import { parseEffortRejection, type EffortRejection } from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -114,29 +115,35 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 		'tabNaming:generateTabName',
 		withIpcErrorLogging(
 			handlerOpts('generateTabName'),
-			async (config: {
-				userMessage: string;
-				agentType: string;
-				cwd: string;
-				sessionSshRemoteConfig?: {
-					enabled: boolean;
-					remoteId: string | null;
-					workingDirOverride?: string;
-				};
-				// Session-level custom env vars from the triggering agent, forwarded so
-				// the naming spawn inherits the SAME provider auth as the chat. The chat
-				// spawn merges global shell env (Settings) -> agent-level -> session-level;
-				// dropping this layer here was why naming could fail "Not logged in" while
-				// the chat (which carries CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY) worked.
-				sessionCustomEnvVars?: Record<string, string>;
-				// Claude token-source selection for the triggering agent, forwarded
-				// from the renderer's session (tab naming has no sessionId to look up
-				// the persisted session by, so the caller passes these inline). When
-				// absent, getClaudeTokenMode() collapses to 'api'.
-				enableMaestroP?: boolean;
-				maestroPMode?: 'interactive' | 'dynamic';
-				maestroPPath?: string;
-			}): Promise<string | null> => {
+			async function generateTabNameHandler(
+				config: {
+					userMessage: string;
+					agentType: string;
+					cwd: string;
+					sessionSshRemoteConfig?: {
+						enabled: boolean;
+						remoteId: string | null;
+						workingDirOverride?: string;
+					};
+					// Session-level custom env vars from the triggering agent, forwarded so
+					// the naming spawn inherits the SAME provider auth as the chat. The chat
+					// spawn merges global shell env (Settings) -> agent-level -> session-level;
+					// dropping this layer here was why naming could fail "Not logged in" while
+					// the chat (which carries CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY) worked.
+					sessionCustomEnvVars?: Record<string, string>;
+					// Claude token-source selection for the triggering agent, forwarded
+					// from the renderer's session (tab naming has no sessionId to look up
+					// the persisted session by, so the caller passes these inline). When
+					// absent, getClaudeTokenMode() collapses to 'api'.
+					enableMaestroP?: boolean;
+					maestroPMode?: 'interactive' | 'dynamic';
+					maestroPPath?: string;
+				},
+				// Internal: set by this handler's own retry (see the effort-rejection
+				// branch in onExit) so the second attempt leaves the effort to the
+				// agent. A named function rather than an arrow so it can call itself.
+				skipCheapEffort?: boolean
+			): Promise<string | null> {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
@@ -195,7 +202,14 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// isn't mapped, and applyAgentConfigOverrides then falls through to
 					// the agent's own configured value - so an unmapped provider keeps
 					// exactly the behaviour it had before.
-					const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
+					const cheapSettings = cheapTurnSettings(config.agentType as ToolType);
+					// The cheap effort is a value MAESTRO picked off a static ladder, and
+					// a provider can retire a rung without notice. When it has refused
+					// this one, the retry below runs again with the effort left to the
+					// agent - a tab named at the wrong effort beats a tab with no name.
+					const cheapNaming = skipCheapEffort
+						? { ...cheapSettings, effort: undefined }
+						: cheapSettings;
 					const allConfigs = agentConfigsStore.get('configs', {});
 					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
@@ -436,12 +450,14 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					return new Promise<string | null>((resolve) => {
 						let output = '';
 						let resolved = false;
+						let effortRejection: EffortRejection | null = null;
 
 						const cleanup = () => {
 							clearTimeout(timeoutId);
 							clearInterval(earlyExtractIntervalId);
 							processManager.off('data', onData);
 							processManager.off('exit', onExit);
+							processManager.off('agent-error', onAgentError);
 						};
 
 						const resolveWith = (tabName: string | null, reason: string) => {
@@ -493,6 +509,14 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							output += data;
 						};
 
+						// A provider's refusal of the effort arrives as an agent error, not
+						// as output: the turn never ran, so `output` stays empty and the
+						// exit below would otherwise read as an anonymous failure.
+						const onAgentError = (errorSessionId: string, agentError: AgentError) => {
+							if (errorSessionId !== sessionId) return;
+							effortRejection = parseEffortRejection(agentError?.message) ?? effortRejection;
+						};
+
 						// Listen for process exit
 						const onExit = (exitSessionId: string, code?: number) => {
 							if (exitSessionId !== sessionId) return;
@@ -501,6 +525,24 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								// Already resolved by early extraction, just clean up listeners
 								processManager.off('data', onData);
 								processManager.off('exit', onExit);
+								processManager.off('agent-error', onAgentError);
+								return;
+							}
+
+							// The provider refused the effort Maestro chose for this turn.
+							// Run it once more at the agent's own effort instead of leaving
+							// the tab unnamed. Only when THIS attempt sent the cheap effort,
+							// so a refusal of the agent's own configured value cannot loop.
+							const rejection = effortRejection ?? parseEffortRejection(output);
+							if (rejection && cheapNaming.effort !== undefined) {
+								resolved = true;
+								cleanup();
+								logger.warn(
+									'Tab naming effort rejected by the provider; retrying at the agent default',
+									LOG_CONTEXT,
+									{ sessionId, effort: cheapNaming.effort, ...rejection }
+								);
+								resolve(generateTabNameHandler(config, true));
 								return;
 							}
 
@@ -540,6 +582,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 
 						processManager.on('data', onData);
 						processManager.on('exit', onExit);
+						processManager.on('agent-error', onAgentError);
 
 						// On Windows (non-SSH), route the prompt via raw stdin to avoid
 						// cmd.exe's ~8KB command-line limit (ENAMETOOLONG on spawn).
