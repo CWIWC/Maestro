@@ -21,6 +21,7 @@ import type { Campaign, CampaignStatus } from '../../../shared/campaign';
 import { broadcastRunUpdated, broadcastEventAppended } from '../../agent-run/broadcast';
 import type { ProcessManager } from '../../process-manager';
 import { generateUUID } from '../../../shared/uuid';
+import { readActivityTail } from '../../../cli/services/agent-run-activity';
 
 const LOG_CONTEXT = '[IPC:AgentRun]';
 
@@ -97,6 +98,18 @@ export function registerAgentRunHandlers(deps: AgentRunHandlerDependencies): voi
 		} catch (error) {
 			logger.error(
 				`Failed to read agent run events ${runId}: ${toErrorMessage(error)}`,
+				LOG_CONTEXT
+			);
+			return { success: false, error: toErrorMessage(error) };
+		}
+	});
+
+	ipcMain.handle('agentRun:activityTail', async (_event, runId: string) => {
+		try {
+			return { success: true, lines: readActivityTail(typeof runId === 'string' ? runId : '') };
+		} catch (error) {
+			logger.error(
+				`Failed to read agent run activity ${runId}: ${toErrorMessage(error)}`,
 				LOG_CONTEXT
 			);
 			return { success: false, error: toErrorMessage(error) };

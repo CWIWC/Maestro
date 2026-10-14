@@ -19,6 +19,7 @@ import {
 	upsertAgentRun,
 	upsertCampaign,
 } from '../services/agent-run-store';
+import { isActivityRunId, readActivityTail } from '../services/agent-run-activity';
 
 const CAMPAIGN_STATUSES = new Set([
 	'queued',
@@ -51,6 +52,10 @@ export interface AgentRunListOptions {
 }
 
 export interface AgentRunShowOptions {
+	json?: boolean;
+}
+
+export interface AgentRunActivityOptions {
 	json?: boolean;
 }
 
@@ -237,6 +242,28 @@ export function agentRunShow(runId: string, options: AgentRunShowOptions): void 
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		fail(message, 'AGENT_RUN_SHOW_FAILED');
+	}
+}
+
+export function agentRunActivity(runId: string, options: AgentRunActivityOptions): void {
+	if (!isActivityRunId(runId)) {
+		fail(`Invalid run id: ${runId}`, 'INVALID_RUN_ID');
+		return;
+	}
+	try {
+		const lines = readActivityTail(runId);
+		if (options.json) {
+			emitJson({ success: true, runId, lines });
+			return;
+		}
+		if (lines.length === 0) {
+			console.log('No activity recorded.');
+			return;
+		}
+		for (const line of lines) console.log(line);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		fail(message, 'AGENT_RUN_ACTIVITY_FAILED');
 	}
 }
 

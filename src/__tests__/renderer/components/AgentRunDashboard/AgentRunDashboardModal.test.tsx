@@ -168,6 +168,7 @@ type AgentRunApiMock = {
 	list: Mock;
 	show: Mock;
 	events: Mock;
+	activityTail: Mock;
 	campaigns: {
 		list: Mock;
 		show: Mock;
@@ -197,6 +198,7 @@ function mockDefaultAgentRunApi(): void {
 		const run = [baseRun, secondRun, taskRun].find((candidate) => candidate.id === runId) ?? null;
 		return Promise.resolve({ success: true, run });
 	});
+	api.activityTail.mockResolvedValue({ success: true, lines: ['tool: Shell', 'pong'] });
 	api.events.mockImplementation((runId: string) => {
 		const events = runId === taskRun.id ? taskRunEvents : runId === baseRun.id ? runEvents : [];
 		return Promise.resolve({ success: true, events });
@@ -226,6 +228,21 @@ describe('AgentRunDashboardModal', () => {
 
 		expect(await screen.findByText('No agent runs yet.')).toBeInTheDocument();
 		expect(screen.getByText('No campaigns yet.')).toBeInTheDocument();
+	});
+
+	it('shows a simplified tail for a running CLI worker', async () => {
+		renderModal();
+
+		fireEvent.click(await screen.findByRole('button', { name: 'Watch (1)' }));
+
+		const card = await screen.findByTestId('agent-run-watch-card');
+		expect(within(card).getByText('Beta Reviewer')).toBeInTheDocument();
+		expect(within(card).getByText('codex')).toBeInTheDocument();
+		expect(within(card).getByText('Review telemetry migration')).toBeInTheDocument();
+		expect(within(card).getByText('tool: Shell')).toBeInTheDocument();
+		expect(within(card).getByText('pong')).toBeInTheDocument();
+		expect(screen.queryByText('Implement parser dashboard')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Cancel/i })).not.toBeInTheDocument();
 	});
 
 	it('renders agent runs with their user-facing identity and status', async () => {

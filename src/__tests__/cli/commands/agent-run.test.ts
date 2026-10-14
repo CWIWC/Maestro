@@ -16,6 +16,7 @@ vi.mock('../../../cli/services/agent-run-store', () => ({
 }));
 
 import {
+	agentRunActivity,
 	agentRunAppendEvent,
 	agentRunList,
 	agentRunRecord,
@@ -24,6 +25,7 @@ import {
 	campaignRecord,
 	campaignShow,
 } from '../../../cli/commands/agent-run';
+import { createActivityBuffer } from '../../../cli/services/agent-run-activity';
 import {
 	appendAgentRunEvent,
 	getAgentRun,
@@ -58,6 +60,28 @@ describe('agent-run command surface', () => {
 		writeFileSync(filePath, JSON.stringify(value), 'utf8');
 		return filePath;
 	}
+
+	it('prints the activity tail for a run and rejects an unsafe id', async () => {
+		const previous = process.env.MAESTRO_USER_DATA;
+		process.env.MAESTRO_USER_DATA = tempDir;
+		try {
+			const buffer = createActivityBuffer('run_cli-send_1_abcd1234', { flushMs: 60_000 });
+			buffer.note({ type: 'text', text: 'pong', isPartial: true });
+			await buffer.flush();
+
+			agentRunActivity('run_cli-send_1_abcd1234', {});
+			expect(consoleSpy).toHaveBeenCalledWith('pong');
+
+			consoleSpy.mockClear();
+			agentRunActivity('../etc/passwd', { json: true });
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			const payload = JSON.parse(String(consoleSpy.mock.calls.at(-1)?.[0]));
+			expect(payload.code).toBe('INVALID_RUN_ID');
+		} finally {
+			if (previous === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = previous;
+		}
+	});
 
 	it('records a valid agent run from --file and preserves future provider metadata', () => {
 		const run = {

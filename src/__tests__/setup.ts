@@ -549,6 +549,7 @@ const mockMaestro = {
 		record: vi.fn().mockResolvedValue({ success: true, run: null }),
 		show: vi.fn().mockResolvedValue({ success: true, run: null }),
 		events: vi.fn().mockResolvedValue({ success: true, events: [] }),
+		activityTail: vi.fn().mockResolvedValue({ success: true, lines: [] }),
 		appendEvent: vi.fn().mockResolvedValue({ success: true, event: null }),
 		campaigns: {
 			list: vi.fn().mockResolvedValue({ success: true, campaigns: [] }),

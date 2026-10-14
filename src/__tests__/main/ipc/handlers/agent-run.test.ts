@@ -50,6 +50,7 @@ describe('AgentRun IPC handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('agentRun:record', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('agentRun:show', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('agentRun:events', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('agentRun:activityTail', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('agentRun:event', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('campaign:list', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('campaign:record', expect.any(Function));
@@ -117,6 +118,19 @@ describe('AgentRun IPC handlers', () => {
 
 		expect(storeMocks.readAgentRunEvents).toHaveBeenCalledWith('run-1');
 		expect(result).toEqual({ success: true, events: [{ id: 'event-1' }] });
+	});
+
+	it('returns an empty activity tail when the sidecar is missing or the id is unsafe', async () => {
+		const handler = registeredHandlers.get('agentRun:activityTail');
+
+		await expect(handler?.({}, 'run_cli-send_0_notreal1')).resolves.toEqual({
+			success: true,
+			lines: [],
+		});
+		await expect(handler?.({}, '../etc/passwd')).resolves.toEqual({
+			success: true,
+			lines: [],
+		});
 	});
 
 	it('appends an agent run event through strict store validation', async () => {

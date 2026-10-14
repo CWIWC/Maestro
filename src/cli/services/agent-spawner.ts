@@ -11,7 +11,9 @@ import type {
 	ToolType,
 	UsageStats,
 } from '../../shared/types';
+import type { ParsedEvent } from '../../main/parsers/agent-output-parser';
 import { createOutputParser } from '../../main/parsers/parser-factory';
+import { deliverActivity } from './agent-run-activity';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
@@ -145,6 +147,7 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'onActivity'
 >;
 
 /**
@@ -1085,6 +1088,8 @@ async function spawnJsonLineAgent(
 					reasoningTokens: usage.reasoningTokens || 0,
 				});
 			}
+
+			deliverActivity(overrides.onActivity, event);
 		};
 
 		child.stdout?.on('data', (data: Buffer) => {
@@ -1200,6 +1205,12 @@ export interface SpawnAgentOptions {
 	 * the processes are otherwise identical. Defaults to 'user'.
 	 */
 	querySource?: QuerySource;
+	/**
+	 * Observational listener for JSON-line events (assistant text, tools, errors).
+	 * A throw is ignored and does not change the spawn result. Claude's parser
+	 * does not call it.
+	 */
+	onActivity?: (event: ParsedEvent) => void;
 }
 
 /**
@@ -1222,6 +1233,7 @@ export async function spawnAgent(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		onActivity: options?.onActivity,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

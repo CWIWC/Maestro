@@ -18,6 +18,7 @@ import {
 	type AgentRunStatus,
 } from '../../shared/agent-run';
 import { upsertAgentRun, appendAgentRunEvent } from './agent-run-store';
+import { createActivityBuffer, type ActivityBuffer } from './agent-run-activity';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../../main/utils/logger';
 
@@ -37,6 +38,14 @@ export interface CaptureCliRunInput {
 	prompt?: string;
 	/** Origin classification, e.g. `cli:send`, `cli:autorun`, `cli:goal`. */
 	source: string;
+	/** Display name for the Watch card, when the caller knows it. */
+	agentName?: string;
+}
+
+/** Handed to the spawn callback so a JSON-line run can record a sidecar tail. */
+export interface CliRunActivity {
+	runId: string;
+	onActivity: ActivityBuffer['note'];
 }
 
 /** Build a unique run id from the source + spawn timestamp + random suffix. */
@@ -76,6 +85,7 @@ function buildRun(
 		cwd: input.cwd,
 		source: input.source,
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
+		...(input.agentName ? { agentName: input.agentName } : {}),
 		...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
 		...(metadata ? { metadata } : {}),
 	};
@@ -124,17 +134,22 @@ function settleRun(
  * exit code from `resolveExit`, and settles it to failed (then re-throws) if
  * `run()` throws. All ledger errors are swallowed so the CLI path is never
  * broken by capture. Returns exactly what `run()` returned.
+ *
+ * `run` receives an activity listener. Callers that spawn a JSON-line agent
+ * pass it through as `onActivity`. The sidecar flush happens after `run()`
+ * returns, so the stdout handler never waits on disk.
  */
 export async function captureCliRun<T>(
 	input: CaptureCliRunInput,
-	run: () => Promise<T>,
+	run: (activity: CliRunActivity) => Promise<T>,
 	resolveExit: (result: T) => number
 ): Promise<T> {
 	const startedAt = Date.now();
 	const runId = createRunId(input.source, startedAt);
+	const activity = createActivityBuffer(runId);
 	safeLedger(() => startRun(input, runId, startedAt));
 	try {
-		const result = await run();
+		const result = await run({ runId, onActivity: activity.note });
 		safeLedger(() => {
 			let exitCode = 1;
 			try {
@@ -148,5 +163,11 @@ export async function captureCliRun<T>(
 	} catch (error) {
 		safeLedger(() => settleRun(input, runId, startedAt, 1));
 		throw error;
+	} finally {
+		try {
+			await activity.flush();
+		} catch (error) {
+			logger.error('agent-run activity flush failed', LOG_CONTEXT, error);
+		}
 	}
 }

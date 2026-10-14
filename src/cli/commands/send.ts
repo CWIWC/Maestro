@@ -140,8 +140,9 @@ export async function send(
 			cwd: agent.cwd,
 			prompt: message,
 			source: 'cli:send',
+			agentName: agent.name,
 		},
-		() =>
+		(activity) =>
 			spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 				readOnlyMode: options.readOnly,
 				customModel: agent.customModel,
@@ -151,6 +152,7 @@ export async function send(
 				customEnvVars: agent.customEnvVars,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
 				appendSystemPrompt,
+				onActivity: activity.onActivity,
 				// Honor the agent's Claude token source for `maestro-cli send` turns.
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,

@@ -37,6 +37,12 @@ export interface AgentRunEventsResponse {
 	error?: string;
 }
 
+export interface AgentRunActivityResponse {
+	success: boolean;
+	lines?: string[];
+	error?: string;
+}
+
 export interface AgentRunEventRecordResponse {
 	success: boolean;
 	event?: AgentRunEvent;
@@ -77,6 +83,8 @@ export function createAgentRunApi() {
 			ipcRenderer.invoke('agentRun:show', runId),
 		events: (runId: string): Promise<AgentRunEventsResponse> =>
 			ipcRenderer.invoke('agentRun:events', runId),
+		activityTail: (runId: string): Promise<AgentRunActivityResponse> =>
+			ipcRenderer.invoke('agentRun:activityTail', runId),
 		appendEvent: (event: AgentRunEvent): Promise<AgentRunEventRecordResponse> =>
 			ipcRenderer.invoke('agentRun:event', event),
 		cancel: (runId: string): Promise<AgentRunActionResponse> =>

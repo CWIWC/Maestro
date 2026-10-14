@@ -49,6 +49,16 @@ describe('AgentRun Preload API', () => {
 		expect(result).toEqual({ success: false, error: 'Run not found: run-1' });
 	});
 
+	it('reads an activity tail through IPC', async () => {
+		mockInvoke.mockResolvedValue({ success: true, lines: ['tool: Shell'] });
+		const api = createAgentRunApi();
+
+		const result = await api.activityTail('run_cli-send_1_abcd1234');
+
+		expect(mockInvoke).toHaveBeenCalledWith('agentRun:activityTail', 'run_cli-send_1_abcd1234');
+		expect(result).toEqual({ success: true, lines: ['tool: Shell'] });
+	});
+
 	it('reads run events through IPC', async () => {
 		mockInvoke.mockResolvedValue({ success: true, events: [] });
 		const api = createAgentRunApi();

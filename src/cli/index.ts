@@ -174,6 +174,7 @@ import {
 } from './commands/pianola-supervise';
 import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
 import {
+	agentRunActivity,
 	agentRunAppendEvent,
 	agentRunList,
 	agentRunRecord,
@@ -248,6 +249,12 @@ agentRun
 	.description('Show an agent run and its events')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((runId, options) => agentRunShow(runId, options));
+
+agentRun
+	.command('activity <run-id>')
+	.description('Show the latest activity lines for a CLI run')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunActivity(runId, options));
 
 const campaign = program.command('campaign').description('Record and inspect agent campaigns');
 

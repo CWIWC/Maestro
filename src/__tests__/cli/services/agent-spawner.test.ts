@@ -1835,6 +1835,32 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe(sessionId);
 		});
 
+		it('ignores a throwing activity callback and still returns the answer', async () => {
+			const resultPromise = spawnAgent(
+				'kimi',
+				'/project',
+				'Reply with exactly: pong',
+				undefined,
+				{
+					onActivity: () => {
+						throw new Error('activity writer failed');
+					},
+				}
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(JSON.stringify({ role: 'assistant', content: 'pong' }) + '\n')
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('pong');
+		});
+
 		it('should spawn grok headless with -p, --always-approve, streaming-json and accumulate text deltas', async () => {
 			const resultPromise = spawnAgent('grok', '/project', 'Hello grok');
 			await new Promise((resolve) => setTimeout(resolve, 0));

@@ -641,8 +641,9 @@ export async function* runPlaybook(
 							cwd: session.cwd,
 							prompt: finalPrompt,
 							source: 'cli:autorun',
+							agentName: session.name,
 						},
-						() =>
+						(activity) =>
 							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
 								customModel: turnSettings.model,
 								customEffort: turnSettings.effort,
@@ -651,6 +652,7 @@ export async function* runPlaybook(
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
 								appendSystemPrompt: playbookSystemPrompt,
+								onActivity: activity.onActivity,
 								// This is Auto Run, not someone typing. Marks the turn so delegation
 								// reporting downstream of the spawn does not count it as hands-on work.
 								querySource: 'auto',
@@ -720,8 +722,9 @@ export async function* runPlaybook(
 								toolType: session.toolType,
 								cwd: session.cwd,
 								source: 'cli:autorun-synopsis',
+								agentName: session.name,
 							},
-							async () =>
+							async (activity) =>
 								spawnAgent(
 									session.toolType,
 									session.cwd,
@@ -744,6 +747,7 @@ export async function* runPlaybook(
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
+										onActivity: activity.onActivity,
 										querySource: 'auto',
 										// Honor the token source for the Auto Run synopsis turn too.
 										enableMaestroP: session.enableMaestroP,

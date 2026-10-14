@@ -110,7 +110,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined }
+			expect.objectContaining({ readOnlyMode: undefined, onActivity: expect.any(Function) })
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -159,7 +159,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined }
+			expect.objectContaining({ readOnlyMode: undefined, onActivity: expect.any(Function) })
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -185,7 +185,7 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined }
+			expect.objectContaining({ readOnlyMode: undefined, onActivity: expect.any(Function) })
 		);
 	});
 
@@ -204,9 +204,13 @@ describe('send command', () => {
 		await send('agent-codex', 'Use codex', {});
 
 		expect(detectAgent).toHaveBeenCalledWith('codex');
-		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
-			readOnlyMode: undefined,
-		});
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'codex',
+			expect.any(String),
+			'Use codex',
+			undefined,
+			expect.objectContaining({ readOnlyMode: undefined, onActivity: expect.any(Function) })
+		);
 	});
 
 	it('should pass readOnlyMode when --read-only flag is set', async () => {
@@ -226,7 +230,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true }
+			expect.objectContaining({ readOnlyMode: true, onActivity: expect.any(Function) })
 		);
 	});
 

@@ -72,6 +72,16 @@ export const agentRunService = {
 		return requireSuccess(response, `Failed to read events for ${runId}`).events ?? [];
 	},
 
+	async activityTail(runId: string): Promise<string[]> {
+		const response = await createIpcMethod({
+			call: () => window.maestro.agentRun.activityTail(runId),
+			errorContext: 'AgentRun activity',
+			defaultValue: { success: false, lines: [], error: `Failed to read activity for ${runId}` },
+		});
+
+		return requireSuccess(response, `Failed to read activity for ${runId}`).lines ?? [];
+	},
+
 	async appendEvent(event: AgentRunEvent): Promise<AgentRunEvent> {
 		const response = await createIpcMethod({
 			call: () => window.maestro.agentRun.appendEvent(event),

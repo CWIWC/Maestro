@@ -2,7 +2,7 @@ import type { AgentRun, AgentRunStatus } from '../../../shared/agent-run';
 import type { Campaign } from '../../../shared/campaign';
 import type { Theme } from '../../types';
 
-export type ViewMode = 'runs' | 'campaigns';
+export type ViewMode = 'runs' | 'campaigns' | 'watch';
 
 export type StatusFilter = 'all' | AgentRunStatus;
 

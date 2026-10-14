@@ -101,8 +101,9 @@ async function requestHandoffBlurb(
 				cwd: session.cwd,
 				prompt: GOAL_SYNOPSIS_REQUEST_PROMPT,
 				source: 'cli:goal-synopsis',
+				agentName: session.name,
 			},
-			() =>
+			(activity) =>
 				spawnAgent(session.toolType, session.cwd, GOAL_SYNOPSIS_REQUEST_PROMPT, agentSessionId, {
 					customModel: runOverrides.model ?? session.customModel,
 					customEffort: runOverrides.effort ?? session.customEffort,
@@ -110,6 +111,7 @@ async function requestHandoffBlurb(
 					customEnvVars: session.customEnvVars,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					appendSystemPrompt,
+					onActivity: activity.onActivity,
 				}),
 			(r) => (r.success ? 0 : 1)
 		);
@@ -241,8 +243,9 @@ export async function* runGoal(
 					cwd: session.cwd,
 					prompt,
 					source: 'cli:goal',
+					agentName: session.name,
 				},
-				() =>
+				(activity) =>
 					spawnAgent(session.toolType, session.cwd, prompt, undefined, {
 						customModel: runModel ?? session.customModel,
 						customEffort: runEffort ?? session.customEffort,
@@ -250,6 +253,7 @@ export async function* runGoal(
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
 						appendSystemPrompt,
+						onActivity: activity.onActivity,
 					}),
 				(r) => (r.success ? 0 : 1)
 			);

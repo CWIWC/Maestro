@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ListChecks, RefreshCw, Search, X } from 'lucide-react';
 import { AGENT_RUN_STATUSES, KNOWN_AGENT_RUN_PROVIDERS } from '../../../shared/agent-run';
@@ -21,6 +21,7 @@ import { RunDetail } from './RunDetail';
 import { CampaignDetail } from './CampaignDetail';
 import { RunList } from './RunList';
 import { CampaignList } from './CampaignList';
+import { WATCH_POLL_MS, WatchGrid } from './WatchGrid';
 
 interface AgentRunDashboardModalProps {
 	isOpen: boolean;
@@ -87,6 +88,23 @@ function AgentRunDashboardBody({
 			return !normalizedSearch || runSearchText(run).includes(normalizedSearch);
 		});
 	}, [campaignFilter, campaigns, normalizedSearch, providerFilter, runs, statusFilter]);
+
+	const watchRuns = useMemo(() => {
+		return runs.filter((run) => {
+			if (run.status !== 'running') return false;
+			if (providerFilter !== 'all' && run.provider !== providerFilter) return false;
+			return !normalizedSearch || runSearchText(run).includes(normalizedSearch);
+		});
+	}, [normalizedSearch, providerFilter, runs]);
+
+	useEffect(() => {
+		if (viewMode !== 'watch') return;
+		void refreshRuns({ limit: RUN_LIMIT });
+		const timer = setInterval(() => {
+			void refreshRuns({ limit: RUN_LIMIT });
+		}, WATCH_POLL_MS);
+		return () => clearInterval(timer);
+	}, [refreshRuns, viewMode]);
 
 	const filteredCampaigns = useMemo(() => {
 		return campaigns.filter((campaign) => {
@@ -208,6 +226,13 @@ function AgentRunDashboardBody({
 						>
 							Campaigns ({filteredCampaigns.length})
 						</ToolbarButton>
+						<ToolbarButton
+							theme={theme}
+							active={viewMode === 'watch'}
+							onClick={() => setViewMode('watch')}
+						>
+							Watch ({watchRuns.length})
+						</ToolbarButton>
 						<div
 							className="ml-auto flex min-w-[260px] items-center gap-2 rounded-md border px-2 py-1"
 							style={{ borderColor: theme.colors.border }}
@@ -280,43 +305,59 @@ function AgentRunDashboardBody({
 					</div>
 				</div>
 
-				<main className="grid min-h-0 flex-1 grid-cols-[minmax(300px,390px)_1fr] gap-0 overflow-hidden">
-					<aside
-						className="min-h-0 overflow-y-auto border-r"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<RunList theme={theme} runs={filteredRuns} onSelectRun={(id) => void selectRun(id)} />
-						<CampaignList
-							theme={theme}
-							campaigns={filteredCampaigns}
-							onSelectCampaign={(id) => void selectCampaign(id)}
-						/>
-					</aside>
+				<main
+					className={
+						viewMode === 'watch'
+							? 'min-h-0 flex-1 overflow-y-auto p-5'
+							: 'grid min-h-0 flex-1 grid-cols-[minmax(300px,390px)_1fr] gap-0 overflow-hidden'
+					}
+				>
+					{viewMode === 'watch' ? (
+						<WatchGrid theme={theme} runs={watchRuns} />
+					) : (
+						<>
+							<aside
+								className="min-h-0 overflow-y-auto border-r"
+								style={{ borderColor: theme.colors.border }}
+							>
+								<RunList
+									theme={theme}
+									runs={filteredRuns}
+									onSelectRun={(id) => void selectRun(id)}
+								/>
+								<CampaignList
+									theme={theme}
+									campaigns={filteredCampaigns}
+									onSelectCampaign={(id) => void selectCampaign(id)}
+								/>
+							</aside>
 
-					<section className="min-h-0 overflow-y-auto p-5">
-						{viewMode === 'runs' ? (
-							<RunDetail
-								theme={theme}
-								run={selectedRun}
-								events={selectedRunEvents}
-								onRefreshEvents={() => selectedRun && void loadRunEvents(selectedRun.id)}
-								onNavigateToSession={onNavigateToSession}
-								onCancel={(runId) => void cancelRun(runId)}
-								onRetry={(runId) => void retryRun(runId)}
-								onMerge={(runId) => void mergeRun(runId)}
-								onResolveFinding={(runId, findingIndex, status) =>
-									void resolveFinding(runId, findingIndex, status)
-								}
-							/>
-						) : (
-							<CampaignDetail
-								theme={theme}
-								campaign={selectedCampaign}
-								onSelectTaskRun={selectTaskRun}
-								missingRunMessage={missingRunMessage}
-							/>
-						)}
-					</section>
+							<section className="min-h-0 overflow-y-auto p-5">
+								{viewMode === 'runs' ? (
+									<RunDetail
+										theme={theme}
+										run={selectedRun}
+										events={selectedRunEvents}
+										onRefreshEvents={() => selectedRun && void loadRunEvents(selectedRun.id)}
+										onNavigateToSession={onNavigateToSession}
+										onCancel={(runId) => void cancelRun(runId)}
+										onRetry={(runId) => void retryRun(runId)}
+										onMerge={(runId) => void mergeRun(runId)}
+										onResolveFinding={(runId, findingIndex, status) =>
+											void resolveFinding(runId, findingIndex, status)
+										}
+									/>
+								) : (
+									<CampaignDetail
+										theme={theme}
+										campaign={selectedCampaign}
+										onSelectTaskRun={selectTaskRun}
+										missingRunMessage={missingRunMessage}
+									/>
+								)}
+							</section>
+						</>
+					)}
 				</main>
 			</div>
 		</div>,
